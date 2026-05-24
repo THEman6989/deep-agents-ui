@@ -17,6 +17,7 @@ export type StateType = {
   messages: Message[];
   todos: TodoItem[];
   files: Record<string, string>;
+  skills?: Array<{ name: string; description?: string }>;
   email?: {
     id?: string;
     subject?: string;
@@ -158,6 +159,7 @@ export function useChat({
     stream,
     todos: stream.values.todos ?? [],
     files: stream.values.files ?? {},
+    skills: stream.values.skills ?? [],
     email: stream.values.email,
     ui: stream.values.ui,
     setFiles,

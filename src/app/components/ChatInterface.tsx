@@ -34,6 +34,7 @@ import { FilesPopover } from "@/app/components/TasksFilesSidebar";
 import { useFileUpload } from "@/app/hooks/useFileUpload";
 import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
 import { ChatOpeners } from "@/app/components/ChatOpeners";
+import { SkillsIndicator } from "@/app/components/SkillsIndicator";
 
 const DEFAULT_OPENERS = [
   "Was kann AlphaRavis?",
@@ -106,6 +107,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     sendMessage,
     stopStream,
     resumeInterrupt,
+    skills,
   } = useChatContext();
 
   const submitDisabled = isLoading || !assistant;
@@ -559,6 +561,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             />
             <div className="flex justify-between gap-2 p-3">
               <div className="flex items-center gap-1">
+                <SkillsIndicator skills={skills} />
                 {/* Hidden file input */}
                 <input
                   ref={fileInputRef}

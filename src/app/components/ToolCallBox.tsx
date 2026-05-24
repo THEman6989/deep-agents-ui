@@ -15,6 +15,7 @@ import { ToolCall, ActionRequest, ReviewConfig } from "@/app/types/types";
 import { cn } from "@/lib/utils";
 import { LoadExternalComponent } from "@langchain/langgraph-sdk/react-ui";
 import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
+import { DiffViewer, isDiffContent } from "@/app/components/DiffViewer";
 
 interface ToolCallBoxProps {
   toolCall: ToolCall;
@@ -211,11 +212,15 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
                     <h4 className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Result
                     </h4>
-                    <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-all rounded-sm border border-border bg-muted/40 p-2 font-mono text-xs leading-7 text-foreground">
-                      {typeof result === "string"
-                        ? result
-                        : JSON.stringify(result, null, 2)}
-                    </pre>
+                    {typeof result === "string" && isDiffContent(result) ? (
+                      <DiffViewer content={result} />
+                    ) : (
+                      <pre className="m-0 overflow-x-auto whitespace-pre-wrap break-all rounded-sm border border-border bg-muted/40 p-2 font-mono text-xs leading-7 text-foreground">
+                        {typeof result === "string"
+                          ? result
+                          : JSON.stringify(result, null, 2)}
+                      </pre>
+                    )}
                   </div>
                 )}
               </>
