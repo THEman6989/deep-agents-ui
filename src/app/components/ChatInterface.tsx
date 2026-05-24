@@ -30,7 +30,7 @@ import type {
 } from "@/app/types/types";
 import { Assistant, Message } from "@langchain/langgraph-sdk";
 import { extractStringFromMessageContent } from "@/app/utils/utils";
-import { useChatContext } from "@/providers/ChatProvider";
+import { useChatContext } from "@/providers/useChatContext";
 import { cn } from "@/lib/utils";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
