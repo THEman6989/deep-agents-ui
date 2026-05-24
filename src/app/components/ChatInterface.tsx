@@ -5,8 +5,8 @@ import React, {
   useRef,
   useCallback,
   useMemo,
-  FormEvent,
   Fragment,
+  FormEvent,
 } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,6 +16,7 @@ import {
   Clock,
   Circle,
   FileIcon,
+  Paperclip,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
 import type {
@@ -30,6 +31,20 @@ import { useChatContext } from "@/providers/ChatProvider";
 import { cn } from "@/lib/utils";
 import { useStickToBottom } from "use-stick-to-bottom";
 import { FilesPopover } from "@/app/components/TasksFilesSidebar";
+import { useFileUpload } from "@/app/hooks/useFileUpload";
+import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
+import { ChatOpeners } from "@/app/components/ChatOpeners";
+
+const DEFAULT_OPENERS = [
+  "Was kann AlphaRavis?",
+  "Analysiere den Code in meinem Projekt",
+  "Starte eine Recherche zu einem Thema",
+  "Hilf mir beim Debuggen eines Problems",
+  "Erstelle einen Implementierungsplan",
+  "Erkläre die Architektur des Systems",
+  "Finde und behebe einen Bug",
+  "Schreibe Tests für eine Funktion",
+];
 
 interface ChatInterfaceProps {
   assistant: Assistant | null;
@@ -65,9 +80,18 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const [metaOpen, setMetaOpen] = useState<"tasks" | "files" | null>(null);
   const tasksContainerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [input, setInput] = useState("");
   const { scrollRef, contentRef } = useStickToBottom();
+
+  const {
+    contentBlocks,
+    handleFileUpload,
+    removeBlock,
+    resetBlocks,
+    dragOver,
+  } = useFileUpload();
 
   const {
     stream,
@@ -85,6 +109,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   } = useChatContext();
 
   const submitDisabled = isLoading || !assistant;
+  const hasContentBlocks = contentBlocks.length > 0;
 
   const handleSubmit = useCallback(
     (e?: FormEvent) => {
@@ -92,11 +117,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
         e.preventDefault();
       }
       const messageText = input.trim();
-      if (!messageText || isLoading || submitDisabled) return;
-      sendMessage(messageText);
+      if ((!messageText && !hasContentBlocks) || isLoading || submitDisabled) return;
+      sendMessage(messageText, contentBlocks.length > 0 ? contentBlocks : undefined);
       setInput("");
+      resetBlocks();
     },
-    [input, isLoading, sendMessage, setInput, submitDisabled]
+    [input, isLoading, sendMessage, setInput, submitDisabled, hasContentBlocks, contentBlocks, resetBlocks]
   );
 
   const handleKeyDown = useCallback(
@@ -254,6 +280,16 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           {isThreadLoading ? (
             <div className="flex items-center justify-center p-8">
               <p className="text-muted-foreground">Loading...</p>
+            </div>
+          ) : processedMessages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <ChatOpeners
+                chatOpeners={DEFAULT_OPENERS}
+                onSelectOpener={(opener) => {
+                  sendMessage(opener);
+                }}
+                disabled={isLoading || !assistant}
+              />
             </div>
           ) : (
             <>
@@ -500,6 +536,14 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
               )}
             </div>
           )}
+          {/* File upload preview */}
+          {hasContentBlocks && (
+            <ContentBlocksPreview
+              blocks={contentBlocks}
+              onRemove={removeBlock}
+              size="sm"
+            />
+          )}
           <form
             onSubmit={handleSubmit}
             className="flex flex-col"
@@ -514,12 +558,33 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
               rows={1}
             />
             <div className="flex justify-between gap-2 p-3">
+              <div className="flex items-center gap-1">
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isLoading}
+                  aria-label="Upload file"
+                >
+                  <Paperclip size={18} />
+                </Button>
+              </div>
               <div className="flex justify-end gap-2">
                 <Button
                   type={isLoading ? "button" : "submit"}
                   variant={isLoading ? "destructive" : "default"}
                   onClick={isLoading ? stopStream : handleSubmit}
-                  disabled={!isLoading && (submitDisabled || !input.trim())}
+                  disabled={!isLoading && (submitDisabled || (!input.trim() && !hasContentBlocks))}
                 >
                   {isLoading ? (
                     <>

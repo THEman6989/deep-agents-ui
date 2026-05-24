@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { format } from "date-fns";
-import { Loader2, MessageSquare, X } from "lucide-react";
+import { Loader2, MessageSquare, X, Pencil, Trash2 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -20,6 +20,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { ThreadItem } from "@/app/hooks/useThreads";
 import { useThreads } from "@/app/hooks/useThreads";
+import { useClient } from "@/providers/ClientProvider";
+import { toast } from "sonner";
 
 type StatusFilter = "all" | "idle" | "busy" | "interrupted" | "error";
 
@@ -125,6 +127,11 @@ export function ThreadList({
 }: ThreadListProps) {
   const [currentThreadId] = useQueryState("threadId");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null);
+
+  const client = useClient();
 
   const threads = useThreads({
     status: statusFilter === "all" ? undefined : statusFilter,
@@ -179,7 +186,6 @@ export function ThreadList({
   }, [flattened]);
 
   // Expose thread list revalidation to parent component
-  // Use refs to create a stable callback that always calls the latest mutate function
   const onMutateReadyRef = useRef(onMutateReady);
   const mutateRef = useRef(threads.mutate);
 
@@ -197,7 +203,6 @@ export function ThreadList({
 
   useEffect(() => {
     onMutateReadyRef.current?.(mutateFn);
-    // Only run once on mount to avoid infinite loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -205,6 +210,59 @@ export function ThreadList({
   useEffect(() => {
     onInterruptCountChange?.(interruptedCount);
   }, [interruptedCount, onInterruptCountChange]);
+
+  // Thread operations
+  const handleStartRename = useCallback((thread: ThreadItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingThreadId(thread.id);
+    setEditTitle(thread.title);
+  }, []);
+
+  const handleSaveRename = useCallback(async (threadId: string) => {
+    const newTitle = editTitle.trim();
+    if (!newTitle || newTitle === "") {
+      setEditingThreadId(null);
+      return;
+    }
+    try {
+      await client.threads.update(threadId, {
+        metadata: { title: newTitle },
+      });
+      toast.success("Thread renamed");
+      threads.mutate();
+    } catch (error) {
+      console.error("Error renaming thread:", error);
+      toast.error("Failed to rename thread");
+    }
+    setEditingThreadId(null);
+  }, [editTitle, client, threads]);
+
+  const handleCancelRename = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingThreadId(null);
+  }, []);
+
+  const handleRenameKeyDown = useCallback((threadId: string, e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleSaveRename(threadId);
+    } else if (e.key === "Escape") {
+      setEditingThreadId(null);
+    }
+  }, [handleSaveRename]);
+
+  const handleDelete = useCallback(async (threadId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("Delete this thread? This cannot be undone.")) return;
+    try {
+      await client.threads.delete(threadId);
+      toast.success("Thread deleted");
+      threads.mutate();
+    } catch (error) {
+      console.error("Error deleting thread:", error);
+      toast.error("Failed to delete thread");
+    }
+  }, [client, threads]);
 
   return (
     <div className="absolute inset-0 flex flex-col">
@@ -297,45 +355,87 @@ export function ThreadList({
                   </h4>
                   <div className="flex flex-col gap-1">
                     {groupThreads.map((thread) => (
-                      <button
+                      <div
                         key={thread.id}
-                        type="button"
-                        onClick={() => onThreadSelect(thread.id)}
-                        className={cn(
-                          "grid w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors duration-200",
-                          "hover:bg-accent",
-                          currentThreadId === thread.id
-                            ? "border border-primary bg-accent hover:bg-accent"
-                            : "border border-transparent bg-transparent"
-                        )}
-                        aria-current={currentThreadId === thread.id}
+                        className="relative group"
+                        onMouseEnter={() => setHoveredThreadId(thread.id)}
+                        onMouseLeave={() => setHoveredThreadId(null)}
                       >
-                        <div className="min-w-0 flex-1">
-                          {/* Title + Timestamp Row */}
-                          <div className="mb-1 flex items-center justify-between">
-                            <h3 className="truncate text-sm font-semibold">
-                              {thread.title}
-                            </h3>
-                            <span className="ml-2 flex-shrink-0 text-xs text-muted-foreground">
-                              {formatTime(thread.updatedAt)}
-                            </span>
-                          </div>
-                          {/* Description + Status Row */}
-                          <div className="flex items-center justify-between">
-                            <p className="flex-1 truncate text-sm text-muted-foreground">
-                              {thread.description}
-                            </p>
-                            <div className="ml-2 flex-shrink-0">
-                              <div
-                                className={cn(
-                                  "h-2 w-2 rounded-full",
-                                  getThreadColor(thread.status)
-                                )}
-                              />
+                        <button
+                          type="button"
+                          onClick={() => onThreadSelect(thread.id)}
+                          className={cn(
+                            "grid w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-left transition-colors duration-200",
+                            "hover:bg-accent",
+                            currentThreadId === thread.id
+                              ? "border border-primary bg-accent hover:bg-accent"
+                              : "border border-transparent bg-transparent"
+                          )}
+                          aria-current={currentThreadId === thread.id}
+                        >
+                          <div className="min-w-0 flex-1">
+                            {/* Title + Timestamp Row */}
+                            <div className="mb-1 flex items-center justify-between">
+                              {editingThreadId === thread.id ? (
+                                <input
+                                  type="text"
+                                  value={editTitle}
+                                  onChange={(e) => setEditTitle(e.target.value)}
+                                  onKeyDown={(e) => handleRenameKeyDown(thread.id, e)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onBlur={() => handleSaveRename(thread.id)}
+                                  className="flex-1 rounded border border-border bg-background px-2 py-0.5 text-sm font-semibold outline-none focus:border-primary"
+                                  autoFocus
+                                />
+                              ) : (
+                                <h3 className="truncate text-sm font-semibold">
+                                  {thread.title}
+                                </h3>
+                              )}
+                              <span className="ml-2 flex-shrink-0 text-xs text-muted-foreground">
+                                {formatTime(thread.updatedAt)}
+                              </span>
+                            </div>
+                            {/* Description + Status Row */}
+                            <div className="flex items-center justify-between">
+                              <p className="flex-1 truncate text-sm text-muted-foreground">
+                                {thread.description}
+                              </p>
+                              <div className="ml-2 flex-shrink-0">
+                                <div
+                                  className={cn(
+                                    "h-2 w-2 rounded-full",
+                                    getThreadColor(thread.status)
+                                  )}
+                                />
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </button>
+                        </button>
+                        {/* Hover action buttons */}
+                        {hoveredThreadId === thread.id && editingThreadId !== thread.id && (
+                          <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={(e) => handleStartRename(thread, e)}
+                              aria-label="Rename thread"
+                            >
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-destructive hover:text-destructive"
+                              onClick={(e) => handleDelete(thread.id, e)}
+                              aria-label="Delete thread"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </div>
