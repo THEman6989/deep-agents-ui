@@ -13,6 +13,34 @@ export const SUPPORTED_FILE_TYPES = [
   "application/pdf",
 ] as const;
 
+const PASTED_IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
+
+function shouldRenamePastedFile(file: File): boolean {
+  const normalizedName = file.name.trim().toLowerCase();
+  return (
+    file.type.startsWith("image/") &&
+    (!normalizedName || normalizedName === "image.png" || normalizedName === "image.jpeg")
+  );
+}
+
+function normalizePastedFileNames(files: File[]): File[] {
+  return files.map((file, index) => {
+    if (!shouldRenamePastedFile(file)) return file;
+
+    const extension = PASTED_IMAGE_EXTENSIONS[file.type] ?? "png";
+    const name = `pasted-image-${new Date().toISOString().replace(/[:.]/g, "-")}-${index + 1}.${extension}`;
+    return new File([file], name, {
+      type: file.type,
+      lastModified: file.lastModified,
+    });
+  });
+}
+
 /**
  * Error messages for file validation
  */
@@ -123,7 +151,8 @@ export async function processFiles(
   existingBlocks: ContentBlock.Multimodal.Data[],
   isPaste = false,
 ): Promise<ContentBlock.Multimodal.Data[]> {
-  const validation = validateFiles(files, existingBlocks);
+  const normalizedFiles = isPaste ? normalizePastedFileNames(files) : files;
+  const validation = validateFiles(normalizedFiles, existingBlocks);
   showFileValidationErrors(validation, isPaste);
 
   if (validation.uniqueFiles.length === 0) {

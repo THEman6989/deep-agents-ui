@@ -125,11 +125,15 @@ export function ThreadList({
   onClose,
   onInterruptCountChange,
 }: ThreadListProps) {
-  const [currentThreadId] = useQueryState("threadId");
+  const [currentThreadId, setCurrentThreadId] = useQueryState("threadId");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null);
+  const [deletingThreadId, setDeletingThreadId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null);
+  const skipRenameBlurRef = useRef(false);
+  const savingRenameRef = useRef(false);
 
   const client = useClient();
 
@@ -214,55 +218,95 @@ export function ThreadList({
   // Thread operations
   const handleStartRename = useCallback((thread: ThreadItem, e: React.MouseEvent) => {
     e.stopPropagation();
+    skipRenameBlurRef.current = false;
     setEditingThreadId(thread.id);
     setEditTitle(thread.title);
   }, []);
 
+  const handleCancelRename = useCallback(() => {
+    setEditingThreadId(null);
+    setEditTitle("");
+  }, []);
+
   const handleSaveRename = useCallback(async (threadId: string) => {
+    if (savingRenameRef.current) return;
+
     const newTitle = editTitle.trim();
-    if (!newTitle || newTitle === "") {
-      setEditingThreadId(null);
+    const existingThread = flattened.find((thread) => thread.id === threadId);
+    const oldTitle = existingThread?.title.trim() ?? "";
+
+    if (!newTitle) {
+      toast.error("Thread title cannot be empty");
+      handleCancelRename();
       return;
     }
+
+    if (newTitle === oldTitle) {
+      handleCancelRename();
+      return;
+    }
+
+    savingRenameRef.current = true;
+    setRenamingThreadId(threadId);
     try {
       await client.threads.update(threadId, {
         metadata: { title: newTitle },
       });
       toast.success("Thread renamed");
-      threads.mutate();
+      await threads.mutate();
     } catch (error) {
       console.error("Error renaming thread:", error);
       toast.error("Failed to rename thread");
+    } finally {
+      savingRenameRef.current = false;
+      setRenamingThreadId(null);
+      handleCancelRename();
     }
-    setEditingThreadId(null);
-  }, [editTitle, client, threads]);
-
-  const handleCancelRename = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setEditingThreadId(null);
-  }, []);
+  }, [editTitle, flattened, handleCancelRename, client, threads]);
 
   const handleRenameKeyDown = useCallback((threadId: string, e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       e.preventDefault();
       handleSaveRename(threadId);
     } else if (e.key === "Escape") {
-      setEditingThreadId(null);
+      skipRenameBlurRef.current = true;
+      handleCancelRename();
     }
+  }, [handleSaveRename, handleCancelRename]);
+
+  const handleRenameBlur = useCallback((threadId: string) => {
+    if (skipRenameBlurRef.current) {
+      skipRenameBlurRef.current = false;
+      return;
+    }
+    handleSaveRename(threadId);
   }, [handleSaveRename]);
 
   const handleDelete = useCallback(async (threadId: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!window.confirm("Delete this thread? This cannot be undone.")) return;
+
+    const fallbackThread = flattened.find((thread) => thread.id !== threadId);
+    setDeletingThreadId(threadId);
     try {
       await client.threads.delete(threadId);
       toast.success("Thread deleted");
-      threads.mutate();
+      await threads.mutate();
+
+      if (currentThreadId === threadId) {
+        if (fallbackThread) {
+          onThreadSelect(fallbackThread.id);
+        } else {
+          await setCurrentThreadId(null);
+        }
+      }
     } catch (error) {
       console.error("Error deleting thread:", error);
       toast.error("Failed to delete thread");
+    } finally {
+      setDeletingThreadId(null);
     }
-  }, [client, threads]);
+  }, [client, threads, flattened, currentThreadId, onThreadSelect, setCurrentThreadId]);
 
   return (
     <div className="absolute inset-0 flex flex-col">
@@ -383,8 +427,9 @@ export function ThreadList({
                                   onChange={(e) => setEditTitle(e.target.value)}
                                   onKeyDown={(e) => handleRenameKeyDown(thread.id, e)}
                                   onClick={(e) => e.stopPropagation()}
-                                  onBlur={() => handleSaveRename(thread.id)}
-                                  className="flex-1 rounded border border-border bg-background px-2 py-0.5 text-sm font-semibold outline-none focus:border-primary"
+                                  onBlur={() => handleRenameBlur(thread.id)}
+                                  disabled={renamingThreadId === thread.id}
+                                  className="flex-1 rounded border border-border bg-background px-2 py-0.5 text-sm font-semibold outline-none focus:border-primary disabled:opacity-60"
                                   autoFocus
                                 />
                               ) : (
@@ -420,18 +465,28 @@ export function ThreadList({
                               size="icon"
                               className="h-6 w-6"
                               onClick={(e) => handleStartRename(thread, e)}
+                              disabled={Boolean(renamingThreadId || deletingThreadId)}
                               aria-label="Rename thread"
                             >
-                              <Pencil className="h-3 w-3" />
+                              {renamingThreadId === thread.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Pencil className="h-3 w-3" />
+                              )}
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
                               className="h-6 w-6 text-destructive hover:text-destructive"
                               onClick={(e) => handleDelete(thread.id, e)}
+                              disabled={Boolean(renamingThreadId || deletingThreadId)}
                               aria-label="Delete thread"
                             >
-                              <Trash2 className="h-3 w-3" />
+                              {deletingThreadId === thread.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-3 w-3" />
+                              )}
                             </Button>
                           </div>
                         )}

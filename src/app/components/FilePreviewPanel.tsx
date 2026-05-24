@@ -1,11 +1,13 @@
 "use client";
 
-import React, { useState, useCallback, useMemo } from "react";
-import { X, FileText, Code, Eye } from "lucide-react";
+import React, { useState, useMemo } from "react";
+import dynamic from "next/dynamic";
+import { X, FileText, Code, Eye, Maximize2, Minimize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { MarkdownContent } from "@/app/components/MarkdownContent";
-import { DiffViewer, isDiffContent } from "@/app/components/DiffViewer";
+import { DiffViewer } from "@/app/components/DiffViewer";
+import { isDiffContent } from "@/lib/diff-utils";
 
 interface FilePreviewTab {
   id: string;
@@ -19,6 +21,12 @@ interface FilePreviewPanelProps {
   isOpen: boolean;
   onClose: () => void;
   className?: string;
+}
+
+interface CodePreviewGateProps {
+  file: FilePreviewTab;
+  editorOpen: boolean;
+  onToggleEditor: () => void;
 }
 
 function detectLanguage(filename: string): string | undefined {
@@ -52,9 +60,67 @@ function detectLanguage(filename: string): string | undefined {
   return map[ext || ""];
 }
 
+function formatByteLength(text: string): string {
+  const bytes = new TextEncoder().encode(text).length;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function CodePreviewGate({ file, editorOpen, onToggleEditor }: CodePreviewGateProps) {
+  if (editorOpen) {
+    return (
+      <div className="flex h-full min-h-[320px] flex-col">
+        <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+          <span className="truncate">
+            Monaco editor · {file.language ?? "text"} · {formatByteLength(file.content)}
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={onToggleEditor}
+            className="h-7 gap-1.5"
+          >
+            <Minimize2 className="h-3.5 w-3.5" />
+            Simple preview
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1">
+          <CodeEditorLazy content={file.content} language={file.language ?? "plaintext"} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-full min-h-[320px] flex-col">
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+        <span className="truncate">
+          Lightweight code preview · {file.language ?? "text"} · {formatByteLength(file.content)}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={onToggleEditor}
+          className="h-7 gap-1.5"
+        >
+          <Maximize2 className="h-3.5 w-3.5" />
+          Open Monaco editor
+        </Button>
+      </div>
+      <pre className="m-0 flex-1 overflow-auto whitespace-pre-wrap p-4 font-mono text-xs leading-relaxed text-foreground">
+        {file.content}
+      </pre>
+    </div>
+  );
+}
+
 export const FilePreviewPanel = React.memo<FilePreviewPanelProps>(
   ({ files, isOpen, onClose, className }) => {
     const [activeFileId, setActiveFileId] = useState<string | null>(null);
+    const [editorOpenByFileId, setEditorOpenByFileId] = useState<Record<string, boolean>>({});
 
     const fileEntries = useMemo(() => {
       return Object.entries(files).map(([name, content]) => ({
@@ -72,13 +138,20 @@ export const FilePreviewPanel = React.memo<FilePreviewPanelProps>(
 
     const activeFile = fileEntries.find((f) => f.id === activeFileId) || fileEntries[0];
 
+    const toggleEditorForFile = (fileId: string) => {
+      setEditorOpenByFileId((current) => ({
+        ...current,
+        [fileId]: !current[fileId],
+      }));
+    };
+
     const renderContent = (file: FilePreviewTab) => {
-      // Diff content
+      // Diff content stays lightweight for patch preview / agent change review.
       if (isDiffContent(file.content)) {
         return <DiffViewer content={file.content} maxLines={500} />;
       }
 
-      // Markdown
+      // Markdown stays as rendered markdown, not Monaco.
       if (file.language === "markdown") {
         return (
           <div className="prose prose-sm dark:prose-invert max-w-none px-4 py-2">
@@ -87,9 +160,16 @@ export const FilePreviewPanel = React.memo<FilePreviewPanelProps>(
         );
       }
 
-      // Code (Monaco is loaded dynamically below for performance)
+      // Code uses a cheap text preview by default. Monaco is loaded only after
+      // the user explicitly presses the editor button for this file.
       if (file.language && file.language !== "diff") {
-        return <CodeEditorLazy content={file.content} language={file.language} />;
+        return (
+          <CodePreviewGate
+            file={file}
+            editorOpen={Boolean(editorOpenByFileId[file.id])}
+            onToggleEditor={() => toggleEditorForFile(file.id)}
+          />
+        );
       }
 
       // Raw text
@@ -146,7 +226,7 @@ export const FilePreviewPanel = React.memo<FilePreviewPanelProps>(
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           {activeFile && renderContent(activeFile)}
         </div>
       </div>
@@ -155,9 +235,6 @@ export const FilePreviewPanel = React.memo<FilePreviewPanelProps>(
 );
 
 FilePreviewPanel.displayName = "FilePreviewPanel";
-
-// Lazy-loaded Monaco editor to avoid heavy bundle on first load
-import dynamic from "next/dynamic";
 
 const CodeEditorLazy = dynamic(
   () =>

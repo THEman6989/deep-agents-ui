@@ -15,7 +15,8 @@ import { ToolCall, ActionRequest, ReviewConfig } from "@/app/types/types";
 import { cn } from "@/lib/utils";
 import { LoadExternalComponent } from "@langchain/langgraph-sdk/react-ui";
 import { ToolApprovalInterrupt } from "@/app/components/ToolApprovalInterrupt";
-import { DiffViewer, isDiffContent } from "@/app/components/DiffViewer";
+import { DiffViewer } from "@/app/components/DiffViewer";
+import { isDiffContent } from "@/lib/diff-utils";
 
 interface ToolCallBoxProps {
   toolCall: ToolCall;

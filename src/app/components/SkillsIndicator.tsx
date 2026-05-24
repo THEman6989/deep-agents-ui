@@ -1,8 +1,7 @@
 "use client";
 
 import React from "react";
-import { CloudLightning, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CloudLightning } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,

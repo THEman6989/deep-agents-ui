@@ -18,6 +18,8 @@ import {
   FileIcon,
   Paperclip,
   Eye,
+  Loader2,
+  X,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
 import type {
@@ -92,9 +94,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const {
     contentBlocks,
     handleFileUpload,
+    handlePaste,
+    dropRef,
     removeBlock,
     resetBlocks,
     dragOver,
+    isProcessingFiles,
   } = useFileUpload();
 
   const {
@@ -113,7 +118,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     skills,
   } = useChatContext();
 
-  const submitDisabled = isLoading || !assistant;
+  const submitDisabled = isLoading || isProcessingFiles || !assistant;
   const hasContentBlocks = contentBlocks.length > 0;
 
   const handleSubmit = useCallback(
@@ -329,11 +334,18 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
 
       <div className="flex-shrink-0 bg-background">
         <div
+          ref={dropRef}
           className={cn(
-            "mx-4 mb-6 flex flex-shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background",
-            "mx-auto w-[calc(100%-32px)] max-w-[1024px] transition-colors duration-200 ease-in-out"
+            "relative mx-4 mb-6 flex flex-shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-background",
+            "mx-auto w-[calc(100%-32px)] max-w-[1024px] transition-colors duration-200 ease-in-out",
+            dragOver && "border-primary/70 bg-primary/5 ring-2 ring-primary/30"
           )}
         >
+          {dragOver && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-primary/60 bg-background/70 text-sm font-medium text-primary backdrop-blur-[1px]">
+              Dateien hier ablegen
+            </div>
+          )}
           {(hasTasks || hasFiles) && (
             <div className="flex max-h-72 flex-col overflow-y-auto border-b border-border bg-sidebar empty:hidden">
               {!metaOpen && (
@@ -560,12 +572,38 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             </div>
           )}
           {/* File upload preview */}
-          {hasContentBlocks && (
-            <ContentBlocksPreview
-              blocks={contentBlocks}
-              onRemove={removeBlock}
-              size="sm"
-            />
+          {(hasContentBlocks || isProcessingFiles) && (
+            <div className="border-t border-border bg-muted/20">
+              {isProcessingFiles && (
+                <div className="flex items-center gap-2 px-[18px] py-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Dateien werden vorbereitet...
+                </div>
+              )}
+              {hasContentBlocks && (
+                <>
+                  <div className="flex items-center justify-between px-[18px] pt-2 text-xs text-muted-foreground">
+                    <span>{contentBlocks.length} attachment{contentBlocks.length === 1 ? "" : "s"}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={resetBlocks}
+                      className="h-7 gap-1.5 px-2 text-xs"
+                      disabled={isLoading}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                      Remove all
+                    </Button>
+                  </div>
+                  <ContentBlocksPreview
+                    blocks={contentBlocks}
+                    onRemove={removeBlock}
+                    size="sm"
+                  />
+                </>
+              )}
+            </div>
           )}
           <form
             onSubmit={handleSubmit}
@@ -576,6 +614,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={handlePaste}
               placeholder={isLoading ? "Running..." : "Write your message..."}
               className="font-inherit field-sizing-content flex-1 resize-none border-0 bg-transparent px-[18px] pb-[13px] pt-[14px] text-sm leading-7 text-primary outline-none placeholder:text-tertiary"
               rows={1}
@@ -597,7 +636,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   variant="ghost"
                   size="icon"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isLoading}
+                  disabled={isLoading || isProcessingFiles}
                   aria-label="Upload file"
                 >
                   <Paperclip size={18} />

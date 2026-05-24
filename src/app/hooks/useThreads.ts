@@ -86,7 +86,11 @@ export function useThreads(props: {
       });
 
       return threads.map((thread): ThreadItem => {
-        let title = "Untitled Thread";
+        const metadataTitle =
+          typeof thread.metadata?.title === "string"
+            ? thread.metadata.title.trim()
+            : "";
+        let title = metadataTitle || "Untitled Thread";
         let description = "";
 
         try {
@@ -95,7 +99,7 @@ export function useThreads(props: {
             const firstHumanMessage = values.messages.find(
               (m: any) => m.type === "human"
             );
-            if (firstHumanMessage?.content) {
+            if (!metadataTitle && firstHumanMessage?.content) {
               const content =
                 typeof firstHumanMessage.content === "string"
                   ? firstHumanMessage.content
@@ -114,8 +118,10 @@ export function useThreads(props: {
             }
           }
         } catch {
-          // Fallback to thread ID
-          title = `Thread ${thread.thread_id.slice(0, 8)}`;
+          // Fallback to thread ID only when no explicit title exists
+          if (!metadataTitle) {
+            title = `Thread ${thread.thread_id.slice(0, 8)}`;
+          }
         }
 
         return {
