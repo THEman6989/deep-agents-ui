@@ -17,6 +17,7 @@ import {
   Circle,
   FileIcon,
   Paperclip,
+  Eye,
 } from "lucide-react";
 import { ChatMessage } from "@/app/components/ChatMessage";
 import type {
@@ -35,6 +36,7 @@ import { useFileUpload } from "@/app/hooks/useFileUpload";
 import { ContentBlocksPreview } from "@/app/components/ContentBlocksPreview";
 import { ChatOpeners } from "@/app/components/ChatOpeners";
 import { SkillsIndicator } from "@/app/components/SkillsIndicator";
+import { FilePreviewPanel } from "@/app/components/FilePreviewPanel";
 
 const DEFAULT_OPENERS = [
   "Was kann AlphaRavis?",
@@ -84,6 +86,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [input, setInput] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
   const { scrollRef, contentRef } = useStickToBottom();
 
   const {
@@ -438,10 +441,28 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                       );
                     })();
 
+                    const previewTrigger = (() => {
+                      if (!hasFiles) return null;
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewOpen((p) => !p)}
+                          className={cn(
+                            "flex flex-shrink-0 cursor-pointer items-center gap-2 px-[18px] py-3 text-left text-sm",
+                            previewOpen && "bg-accent"
+                          )}
+                        >
+                          <Eye className="h-4 w-4" />
+                          Preview
+                        </button>
+                      );
+                    })();
+
                     return (
-                      <div className="grid grid-cols-[1fr_auto_auto] items-center">
+                      <div className="grid grid-cols-[1fr_auto_auto_auto] items-center">
                         {tasksTrigger}
                         {filesTrigger}
+                        {previewTrigger}
                       </div>
                     );
                   })()}
@@ -606,6 +627,15 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
           </form>
         </div>
       </div>
+      {previewOpen && (
+        <div className="fixed inset-y-0 right-0 z-50 w-[450px] shadow-2xl border-l border-border bg-background animate-in slide-in-from-right">
+          <FilePreviewPanel
+            files={files}
+            isOpen={previewOpen}
+            onClose={() => setPreviewOpen(false)}
+          />
+        </div>
+      )}
     </div>
   );
 });
