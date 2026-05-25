@@ -1,7 +1,17 @@
 "use client";
 
-import React, { FormEvent, useMemo, useState } from "react";
-import { FileText, Presentation, Send, Table2, Eye } from "lucide-react";
+import React, { FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  Download,
+  ExternalLink,
+  Eye,
+  FileSpreadsheet,
+  FileText,
+  FileType2,
+  Presentation,
+  Send,
+  Table2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -46,18 +56,67 @@ function safeSlug(value: string): string {
   return slug || "office-document";
 }
 
+interface OfficeOutputFile {
+  filename: string;
+  relative_path: string;
+  extension: string;
+  size: number;
+  modified_at: number;
+  public_url: string;
+  download_url: string;
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDate(ts: number): string {
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString("de-DE", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
+}
+
+const EXTENSION_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  ".docx": FileText,
+  ".pptx": Presentation,
+  ".xlsx": FileSpreadsheet,
+};
+
 export const OfficePanel = React.memo(function OfficePanel() {
-  const { files, isLoading, sendMessage } = useChatContext();
+  const { isLoading, sendMessage } = useChatContext();
   const [kind, setKind] = useState<OfficeKind>("pptx");
   const [title, setTitle] = useState("AlphaRavis Office Document");
   const [instructions, setInstructions] = useState(
     "Erstelle ein sauberes Dokument, prüfe es mit OfficeCLI view/issues/validate und speichere das Ergebnis im Office output directory."
   );
+  const [outputFiles, setOutputFiles] = useState<OfficeOutputFile[]>([]);
+  const [outputFetchError, setOutputFetchError] = useState<string | null>(null);
+  const [outputFetching, setOutputFetching] = useState(false);
 
-  const fileEntries = useMemo(
-    () => Object.entries(files ?? {}).filter(([name]) => /\.(docx|pptx|xlsx)$/i.test(name)),
-    [files]
-  );
+  const fetchOutputFiles = useCallback(async () => {
+    setOutputFetching(true);
+    setOutputFetchError(null);
+    try {
+      const res = await fetch(OUTPUT_FILES_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setOutputFiles((data.files as OfficeOutputFile[]) ?? []);
+    } catch (err: unknown) {
+      setOutputFetchError(err instanceof Error ? err.message : "fetch failed");
+      setOutputFiles([]);
+    } finally {
+      setOutputFetching(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchOutputFiles();
+  }, [fetchOutputFiles]);
 
   const selected = OFFICE_TYPES[kind];
   const Icon = selected.icon;
@@ -168,28 +227,82 @@ export const OfficePanel = React.memo(function OfficePanel() {
 
         <aside className="space-y-4">
           <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-            <h3 className="font-medium text-foreground">Recent Office files</h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Files reported by the LangGraph state appear here.
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-foreground">Output files</h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Generated documents from /workspace/office-output.
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={fetchOutputFiles}
+                disabled={outputFetching}
+                className="h-8 text-xs"
+              >
+                {outputFetching ? "…" : "Refresh"}
+              </Button>
+            </div>
             <div className="mt-4 space-y-2">
-              {fileEntries.length === 0 ? (
+              {outputFetchError ? (
+                <div className="rounded-lg border border-dashed border-red-500/30 bg-red-500/5 p-3 text-xs text-red-400">
+                  Could not load output files: {outputFetchError}
+                </div>
+              ) : outputFiles.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                  No Office files in this thread yet.
+                  {outputFetching
+                    ? "Loading…"
+                    : "No Office files generated yet. Use the form to create one."}
                 </div>
               ) : (
-                fileEntries.map(([name, path]) => (
-                  <div
-                    key={`${name}-${path}`}
-                    className={cn(
-                      "rounded-lg border border-border bg-background/60 p-3",
-                      "text-sm text-muted-foreground"
-                    )}
-                  >
-                    <div className="font-medium text-foreground">{name}</div>
-                    <div className="mt-1 break-all font-mono text-xs">{path}</div>
-                  </div>
-                ))
+                outputFiles.map((file) => {
+                  const ExtIcon = EXTENSION_ICON[file.extension] ?? FileType2;
+                  return (
+                    <div
+                      key={file.relative_path}
+                      className={cn(
+                        "rounded-lg border border-border bg-background/60 p-3",
+                        "text-sm"
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 shrink-0 rounded bg-[#2F6868]/15 p-1.5 text-[#7dd3c7]">
+                          <ExtIcon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium text-foreground">
+                            {file.filename}
+                          </div>
+                          <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                            <span>{formatSize(file.size)}</span>
+                            <span>{formatDate(file.modified_at)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        <a
+                          href={file.download_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <Download className="h-3 w-3" />
+                          Download
+                        </a>
+                        <a
+                          href={file.public_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Open
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </div>
           </div>
