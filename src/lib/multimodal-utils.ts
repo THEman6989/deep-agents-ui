@@ -11,7 +11,12 @@ export async function fileToContentBlock(
     "image/gif",
     "image/webp",
   ];
-  const supportedFileTypes = [...supportedImageTypes, "application/pdf"];
+  const supportedOfficeTypes = [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ];
+  const supportedFileTypes = [...supportedImageTypes, "application/pdf", ...supportedOfficeTypes];
 
   if (!supportedFileTypes.includes(file.type)) {
     toast.error(
@@ -31,10 +36,11 @@ export async function fileToContentBlock(
     };
   }
 
-  // PDF
+  // PDF / Office files stay file blocks. The backend/agent should save or
+  // inspect Office documents with OfficeCLI instead of treating them as images.
   return {
     type: "file",
-    mimeType: "application/pdf",
+    mimeType: file.type,
     data,
     metadata: { filename: file.name },
   };
@@ -66,7 +72,8 @@ export function isBase64ContentBlock(
     "mimeType" in block &&
     typeof (block as { mimeType?: unknown }).mimeType === "string" &&
     ((block as { mimeType: string }).mimeType.startsWith("image/") ||
-      (block as { mimeType: string }).mimeType === "application/pdf")
+      (block as { mimeType: string }).mimeType === "application/pdf" ||
+      (block as { mimeType: string }).mimeType.startsWith("application/vnd.openxmlformats-officedocument"))
   ) {
     return true;
   }

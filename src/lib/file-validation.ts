@@ -5,12 +5,19 @@ import { fileToContentBlock } from "@/lib/multimodal-utils";
 /**
  * Supported file types for upload
  */
+export const OFFICE_FILE_TYPES = [
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+] as const;
+
 export const SUPPORTED_FILE_TYPES = [
   "image/jpeg",
   "image/png",
   "image/gif",
   "image/webp",
   "application/pdf",
+  ...OFFICE_FILE_TYPES,
 ] as const;
 
 const PASTED_IMAGE_EXTENSIONS: Record<string, string> = {
@@ -46,9 +53,9 @@ function normalizePastedFileNames(files: File[]): File[] {
  */
 const ERROR_MESSAGES = {
   INVALID_FILE_TYPE:
-    "You have uploaded invalid file type. Please upload a JPEG, PNG, GIF, WEBP image or a PDF.",
+    "You have uploaded invalid file type. Please upload a JPEG, PNG, GIF, WEBP image, PDF, DOCX, PPTX, XLSX file.",
   INVALID_FILE_TYPE_PASTE:
-    "You have pasted an invalid file type. Please paste a JPEG, PNG, GIF, WEBP image or a PDF.",
+    "You have pasted an invalid file type. Please paste a JPEG, PNG, GIF, WEBP image, PDF, DOCX, PPTX, XLSX file.",
   DUPLICATE_FILES: (fileNames: string[]) =>
     `Duplicate file(s) detected: ${fileNames.join(", ")}. Each file can only be uploaded once per message.`,
 } as const;
@@ -60,11 +67,11 @@ export function isDuplicate(
   file: File,
   existingBlocks: ContentBlock.Multimodal.Data[],
 ): boolean {
-  if (file.type === "application/pdf") {
+  if (file.type === "application/pdf" || OFFICE_FILE_TYPES.includes(file.type as (typeof OFFICE_FILE_TYPES)[number])) {
     return existingBlocks.some(
       (block) =>
         block.type === "file" &&
-        block.mimeType === "application/pdf" &&
+        block.mimeType === file.type &&
         block.metadata?.filename === file.name,
     );
   }

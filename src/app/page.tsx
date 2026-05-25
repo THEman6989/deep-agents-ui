@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { useClient } from "@/providers/useClient";
-import { Settings, MessagesSquare, SquarePen } from "lucide-react";
+import { Settings, MessagesSquare, SquarePen, FileText } from "lucide-react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -17,6 +17,7 @@ import {
 import { ThreadList } from "@/app/components/ThreadList";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
+import { OfficePanel } from "@/app/components/OfficePanel";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
@@ -38,6 +39,7 @@ function HomePageInner({
   const [mutateThreads, setMutateThreads] = useState<(() => void) | null>(null);
   const [interruptCount, setInterruptCount] = useState(0);
   const [assistant, setAssistant] = useState<Assistant | null>(null);
+  const [activeView, setActiveView] = useState<"chat" | "office">("chat");
 
   const fetchAssistant = useCallback(async () => {
     const isUUID =
@@ -133,6 +135,26 @@ function HomePageInner({
             )}
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex rounded-md border border-border bg-card p-1">
+              <Button
+                variant={activeView === "chat" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setActiveView("chat")}
+                className="h-8 px-3"
+              >
+                <MessagesSquare className="mr-2 h-4 w-4" />
+                Chat
+              </Button>
+              <Button
+                variant={activeView === "office" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setActiveView("office")}
+                className="h-8 px-3"
+              >
+                <FileText className="mr-2 h-4 w-4" />
+                Office
+              </Button>
+            </div>
             <div className="text-sm text-muted-foreground">
               <span className="font-medium">Assistant:</span>{" "}
               {config.assistantId}
@@ -194,7 +216,11 @@ function HomePageInner({
                 activeAssistant={assistant}
                 onHistoryRevalidate={() => mutateThreads?.()}
               >
-                <ChatInterface assistant={assistant} />
+                {activeView === "chat" ? (
+                  <ChatInterface assistant={assistant} />
+                ) : (
+                  <OfficePanel />
+                )}
               </ChatProvider>
             </ResizablePanel>
           </ResizablePanelGroup>
