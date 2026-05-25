@@ -1,6 +1,6 @@
 "use client";
 
-import React, { FormEvent, useCallback, useEffect, useState } from "react";
+import React, { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Camera,
   Download,
@@ -121,6 +121,19 @@ export const OfficePanel = React.memo(function OfficePanel() {
   useEffect(() => {
     fetchOutputFiles();
   }, [fetchOutputFiles]);
+
+  // Auto-refresh output files after the agent finishes a command
+  const prevLoading = useRef(isLoading);
+  useEffect(() => {
+    const wasLoading = prevLoading.current;
+    prevLoading.current = isLoading;
+    if (wasLoading && !isLoading) {
+      const timer = setTimeout(() => {
+        fetchOutputFiles();
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, fetchOutputFiles]);
 
   const selected = OFFICE_TYPES[kind];
   const Icon = selected.icon;
