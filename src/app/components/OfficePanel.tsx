@@ -2,6 +2,7 @@
 
 import React, { FormEvent, useCallback, useEffect, useState } from "react";
 import {
+  Camera,
   Download,
   ExternalLink,
   Eye,
@@ -130,6 +131,19 @@ export const OfficePanel = React.memo(function OfficePanel() {
       `Anforderungen: ${instructions.trim() || "Keine zusätzlichen Anforderungen."}`,
       "Vorgehen: officecli create, add/set Inhalte, view outline/issues, bei Bedarf screenshot/html, dann officecli validate.",
       "Wenn Live Preview nötig ist, nutze officecli watch auf Port 26315 und nenne die Preview-URL.",
+    ].join("\n");
+    sendMessage(message);
+  };
+
+  const handleScreenshot = (file: OfficeOutputFile) => {
+    const screenshotDir = "/workspace/office-output";
+    const base = file.filename.replace(/\.[^.]+$/, "");
+    const message = [
+      `Generiere einen Screenshot des Office-Dokuments mit OfficeCLI.`,
+      `Datei: ${screenshotDir}/${file.filename}`,
+      `Befehl: officecli view ${screenshotDir}/${file.filename} screenshot -o ${screenshotDir}/${base}-preview`,
+      `Speichere das PNG unter ${screenshotDir}/${base}-preview.png und bestätige den Dateipfad.`,
+      `Falls mehrere Seiten: nutze --page 1-3 oder --page all für alle Seiten.`,
     ].join("\n");
     sendMessage(message);
   };
@@ -281,6 +295,15 @@ export const OfficePanel = React.memo(function OfficePanel() {
                         </div>
                       </div>
                       <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleScreenshot(file)}
+                          disabled={isLoading}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                        >
+                          <Camera className="h-3 w-3" />
+                          Screenshot
+                        </button>
                         <a
                           href={file.download_url}
                           target="_blank"
