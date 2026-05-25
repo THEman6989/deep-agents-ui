@@ -13,6 +13,8 @@ type OfficeKind = "pptx" | "docx" | "xlsx";
 const OFFICE_OUTPUT_DIR = "/workspace/office-output";
 const PREVIEW_URL =
   process.env.NEXT_PUBLIC_OFFICE_PREVIEW_URL || "http://localhost:26315";
+const OUTPUT_FILES_URL =
+  process.env.NEXT_PUBLIC_OFFICE_OUTPUT_FILES_URL || "http://localhost:8130/office/files";
 
 const OFFICE_TYPES: Record<
   OfficeKind,
@@ -83,15 +85,26 @@ export const OfficePanel = React.memo(function OfficePanel() {
               Create with OfficeCLI: DOCX, PPTX, XLSX in {OFFICE_OUTPUT_DIR}.
             </p>
           </div>
-          <a
-            href={PREVIEW_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            <Eye className="h-4 w-4" />
-            Live Preview
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={OUTPUT_FILES_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <FileText className="h-4 w-4" />
+              Output files
+            </a>
+            <a
+              href={PREVIEW_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
+              <Eye className="h-4 w-4" />
+              Live Preview
+            </a>
+          </div>
         </div>
       </div>
 
