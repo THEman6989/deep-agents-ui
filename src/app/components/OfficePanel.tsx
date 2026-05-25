@@ -9,6 +9,8 @@ import {
   FileSpreadsheet,
   FileText,
   FileType2,
+  MonitorPlay,
+  MonitorStop,
   Presentation,
   Send,
   Table2,
@@ -98,6 +100,7 @@ export const OfficePanel = React.memo(function OfficePanel() {
   const [outputFiles, setOutputFiles] = useState<OfficeOutputFile[]>([]);
   const [outputFetchError, setOutputFetchError] = useState<string | null>(null);
   const [outputFetching, setOutputFetching] = useState(false);
+  const [watchFile, setWatchFile] = useState<OfficeOutputFile | null>(null);
 
   const fetchOutputFiles = useCallback(async () => {
     setOutputFetching(true);
@@ -144,6 +147,28 @@ export const OfficePanel = React.memo(function OfficePanel() {
       `Befehl: officecli view ${screenshotDir}/${file.filename} screenshot -o ${screenshotDir}/${base}-preview`,
       `Speichere das PNG unter ${screenshotDir}/${base}-preview.png und bestätige den Dateipfad.`,
       `Falls mehrere Seiten: nutze --page 1-3 oder --page all für alle Seiten.`,
+    ].join("\n");
+    sendMessage(message);
+  };
+
+  const handleWatch = (file: OfficeOutputFile) => {
+    setWatchFile(file);
+    const message = [
+      `Starte den Live-Preview-Watch-Modus für das Office-Dokument.`,
+      `Datei: /workspace/office-output/${file.filename}`,
+      `Befehl: officecli watch /workspace/office-output/${file.filename} --port 26315`,
+      `Führe den Befehl als Hintergrundprozess aus (background=true), damit der Watch-Server läuft.`,
+      `Bestätige, dass der Watch-Server gestartet wurde und die Preview unter http://localhost:26315 erreichbar ist.`,
+    ].join("\n");
+    sendMessage(message);
+  };
+
+  const handleStopWatch = () => {
+    setWatchFile(null);
+    const message = [
+      `Stoppe den laufenden officecli watch Prozess auf Port 26315.`,
+      `Beende den Hintergrundprozess mit process(action='kill') oder terminal(kill).`,
+      `Bestätige, dass der Watch-Server gestoppt wurde.`,
     ].join("\n");
     sendMessage(message);
   };
@@ -240,6 +265,38 @@ export const OfficePanel = React.memo(function OfficePanel() {
         </form>
 
         <aside className="space-y-4">
+          {watchFile && (
+            <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+              <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                <div className="min-w-0">
+                  <h3 className="truncate font-medium text-foreground">
+                    Live Preview: {watchFile.filename}
+                  </h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Watching via officecli on port 26315
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleStopWatch}
+                  disabled={isLoading}
+                  className="ml-3 h-8 shrink-0 text-xs"
+                >
+                  <MonitorStop className="mr-1 h-3 w-3" />
+                  Stop
+                </Button>
+              </div>
+              <div className="aspect-[4/3] w-full">
+                <iframe
+                  src={PREVIEW_URL}
+                  className="h-full w-full border-0"
+                  title="Office Live Preview"
+                  sandbox="allow-scripts allow-same-origin"
+                />
+              </div>
+            </div>
+          )}
           <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
@@ -295,6 +352,15 @@ export const OfficePanel = React.memo(function OfficePanel() {
                         </div>
                       </div>
                       <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleWatch(file)}
+                          disabled={isLoading}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                        >
+                          <MonitorPlay className="h-3 w-3" />
+                          Watch
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleScreenshot(file)}
