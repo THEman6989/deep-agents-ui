@@ -69,8 +69,6 @@ const TEMPLATE_MERGE_FORM_URL =
 const OFFICE_AGENT_ENABLED =
   (process.env.NEXT_PUBLIC_OFFICE_AGENT_ENABLED || "false").toLowerCase() !== "false";
 const OFFICE_AGENT_NAME = process.env.NEXT_PUBLIC_OFFICE_AGENT_NAME || "office_agent";
-const ONLYOFFICE_URL =
-  process.env.NEXT_PUBLIC_ONLYOFFICE_URL || "http://localhost:8088";
 const ODF_ENABLED =
   (process.env.NEXT_PUBLIC_ALPHARAVIS_ENABLE_ODF_UPLOAD || "false").toLowerCase() === "true";
 
@@ -263,7 +261,6 @@ export const OfficePanel = React.memo(function OfficePanel() {
   const [uploading, setUploading] = useState(false);
   const [watchFile, setWatchFile] = useState<OfficeOutputFile | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
-  const [editingFile, setEditingFile] = useState<OfficeOutputFile | null>(null);
   const [blueprints, setBlueprints] = useState<OfficeOutputFile[]>([]);
   const [blueprintHint, setBlueprintHint] = useState(
     "If you like documents you already have, you can make a blueprint out of it and reuse the structure later."
@@ -406,10 +403,20 @@ export const OfficePanel = React.memo(function OfficePanel() {
 
   /** Office file extensions that go to the Office output directory */
   const OFFICE_EXTENSIONS = [".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls"];
+  const ODF_EXTENSIONS = [".odt", ".odp", ".ods"];
   const isOfficeFile = (file: File): boolean => {
     const lower = file.name.toLowerCase();
     return OFFICE_EXTENSIONS.some((ext) => lower.endsWith(ext));
   };
+  const isOdfFile = (file: File): boolean => {
+    const lower = file.name.toLowerCase();
+    return ODF_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  };
+  const uploadAccept = [
+    ".docx,.pptx,.xlsx,.doc,.ppt,.xls",
+    ODF_ENABLED ? ".odt,.odp,.ods" : "",
+    ".pdf,image/*,video/*,audio/*,.txt,.md,.csv,.json",
+  ].filter(Boolean).join(",");
 
   const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -417,6 +424,11 @@ export const OfficePanel = React.memo(function OfficePanel() {
     setUploading(true);
     setUploadError(null);
     try {
+      const odfUpload = isOdfFile(file);
+      if (odfUpload && !ODF_ENABLED) {
+        throw new Error("ODF upload is disabled. Set ALPHARAVIS_ENABLE_ODF_UPLOAD=true and rebuild the UI to enable .odt/.odp/.ods uploads.");
+      }
+
       if (isOfficeFile(file)) {
         // Office files → Office output directory (OfficeCLI can work on them)
         const formData = new FormData();
@@ -437,25 +449,35 @@ export const OfficePanel = React.memo(function OfficePanel() {
           );
         }
       } else {
-        // Images, PDFs, videos, text files → Media Gallery
+        // Images, PDFs, videos, text files, and ODF inputs → Media Gallery.
+        // ODF files are converted server-side by Media Gallery when the ODF feature flag is enabled.
         const formData = new FormData();
         formData.append("file", file);
         const res = await fetch(MEDIA_GALLERY_UPLOAD_URL, { method: "POST", body: formData });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const publicUrl = data.public_url as string;
-        const fileType = file.type.startsWith("video/") ? "Video" :
+        const convertedAsset = data.converted_asset as { public_url?: string; filename?: string; mime_type?: string } | undefined;
+        const originalAsset = data.original_asset as { public_url?: string; filename?: string; mime_type?: string } | undefined;
+        const publicUrl = (convertedAsset?.public_url || data.public_url) as string;
+        const fileType = odfUpload ? "ODF-Datei" :
+          file.type.startsWith("video/") ? "Video" :
           file.type.startsWith("audio/") ? "Audio" :
           file.type.startsWith("image/") ? "Bild" :
           file.type === "application/pdf" ? "PDF" : "Datei";
         await fetchOutputFiles();
         sendOfficeAgentMessage(
           [
-            `${fileType} wurde in die Media Gallery hochgeladen.`,
+            odfUpload && convertedAsset
+              ? `${fileType} wurde in der Media Gallery hochgeladen und per OnlyOffice nach ${convertedAsset.filename || "OOXML"} konvertiert.`
+              : `${fileType} wurde in die Media Gallery hochgeladen.`,
             `URL: ${publicUrl}`,
+            convertedAsset?.mime_type ? `Konvertierter MIME-Type: ${convertedAsset.mime_type}` : "",
+            originalAsset?.public_url ? `Original-URL: ${originalAsset.public_url}` : "",
             `Dateiname: ${file.name}`,
-            `Bitte analysiere die Datei mit den verfügbaren Tools. Für Bilder/PDFs nutze vision_analyze, für Videos/Audio nutze die Media-Analyse-Tools.`,
-          ].join("\n")
+            odfUpload
+              ? `Bitte nutze die konvertierte OOXML-Datei aus der URL für weitere Office-Bearbeitung.`
+              : `Bitte analysiere die Datei mit den verfügbaren Tools. Für Bilder/PDFs nutze vision_analyze, für Videos/Audio nutze die Media-Analyse-Tools.`,
+          ].filter(Boolean).join("\n")
         );
       }
     } catch (err: unknown) {
@@ -821,7 +843,7 @@ export const OfficePanel = React.memo(function OfficePanel() {
               <span className="font-medium text-foreground">Upload file</span>
               <input
                 type="file"
-                accept=".docx,.pptx,.xlsx,.doc,.ppt,.xls,.odt,.odp,.ods,.pdf,image/*,video/*,audio/*,.txt,.md,.csv,.json"
+                accept={uploadAccept}
                 onChange={handleUpload}
                 disabled={uploading || isLoading}
                 className="block w-full text-xs file:mr-3 file:rounded-md file:border-0 file:bg-[#2F6868] file:px-3 file:py-1.5 file:text-xs file:text-white hover:file:bg-[#2F6868]/80 disabled:opacity-50"
@@ -1147,20 +1169,6 @@ export const OfficePanel = React.memo(function OfficePanel() {
                           <ExternalLink className="h-3 w-3" />
                           Open
                         </a>
-                        {ODF_ENABLED && /\.(docx|pptx|xlsx|odt|odp|ods)$/i.test(file.filename) && (
-                          <button
-                            type="button"
-                            onClick={() => setEditingFile(file)}
-                            disabled={isLoading}
-                            className="inline-flex items-center gap-1.5 rounded-md border border-[#FF8C42]/40 bg-[#FF8C42]/10 px-2.5 py-1 text-xs text-[#FF8C42] hover:bg-[#FF8C42]/20 disabled:opacity-50"
-                          >
-                            <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" />
-                              <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" />
-                            </svg>
-                            Edit in OnlyOffice
-                          </button>
-                        )}
                       </div>
                     </div>
                   );
@@ -1211,7 +1219,7 @@ export const OfficePanel = React.memo(function OfficePanel() {
             </div>
           </div>
 
-          {/* Compare — collapsible comparison view */}
+          {/* Output versions — collapsible list of generated files and previews. */}
           <div className="rounded-xl border border-border bg-card p-5 text-sm shadow-sm">
             <button
               type="button"
@@ -1219,9 +1227,9 @@ export const OfficePanel = React.memo(function OfficePanel() {
               className="flex w-full items-center justify-between text-left"
             >
               <div>
-                <h3 className="font-medium text-foreground">Compare documents</h3>
+                <h3 className="font-medium text-foreground">Output versions</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {compareOpen ? "Click to collapse" : "Click to expand — compare conversions, edits, and exports"}
+                  {compareOpen ? "Click to collapse" : "Click to expand — generated files, previews, and validation state"}
                 </p>
               </div>
               <span className="text-xs text-muted-foreground">
@@ -1232,7 +1240,7 @@ export const OfficePanel = React.memo(function OfficePanel() {
               <div className="mt-4 space-y-3">
                 {outputFiles.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    No files generated yet. Create a document to see comparison chains here.
+                    No files generated yet. Create or upload a document to see output versions here.
                   </p>
                 ) : (
                   outputFiles.map((file) => (
@@ -1280,65 +1288,6 @@ export const OfficePanel = React.memo(function OfficePanel() {
               </div>
             )}
           </div>
-
-          {/* OnlyOffice Editor Panel */}
-          {editingFile && (
-            <div className="rounded-xl border border-[#FF8C42]/30 bg-[#FF8C42]/5 p-5 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-medium text-foreground">
-                    📝 OnlyOffice Editor
-                  </h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Editing: {editingFile.filename}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEditingFile(null)}
-                  className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="mt-4 space-y-3">
-                <div className="rounded-lg border border-dashed border-[#FF8C42]/30 bg-white p-2">
-                  <iframe
-                    src={`${ONLYOFFICE_URL}/editors/editor?file=${encodeURIComponent(editingFile.public_url)}&mode=edit`}
-                    className="h-[500px] w-full border-0"
-                    title="OnlyOffice Editor"
-                    sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      sendOfficeAgentMessage(
-                        [
-                          `Der Benutzer hat die Datei "${editingFile.filename}" manuell im OnlyOffice-Editor bearbeitet.`,
-                          `Bitte überprüfe die Datei unter ${officeOutputPath(editingFile)} auf Änderungen`,
-                          `und setze den Workflow mit der editierten Version fort.`,
-                        ].join("\n")
-                      );
-                      setEditingFile(null);
-                    }}
-                    disabled={isLoading}
-                    className="flex-1 rounded-md border border-[#FF8C42]/40 bg-[#FF8C42] px-3 py-2 text-xs font-medium text-white hover:bg-[#FF8C42]/80 disabled:opacity-50"
-                  >
-                    Continue editing with agent
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditingFile(null)}
-                    className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground shadow-sm">
             <h3 className="font-medium text-foreground">Runtime checklist</h3>

@@ -178,7 +178,7 @@ export function HermesPanel() {
       if (mode === "direct") {
         direct.sendMessage(userMessage, attachments?.length ? attachments : undefined);
       } else {
-        orch.sendMessage(userMessage);
+        orch.sendMessage(userMessage, attachments?.length ? attachments : undefined);
       }
     },
     [mode, direct.sendMessage, orch.sendMessage]
@@ -193,13 +193,15 @@ export function HermesPanel() {
   }, [mode, direct.clearMessages, orch.clearMessages]);
 
   const approveAction = useCallback(
-    (approvalId: string) => direct.approveAction(approvalId),
-    [direct.approveAction]
+    (approvalId: string) =>
+      mode === "direct" ? direct.approveAction(approvalId) : orch.approveAction(approvalId),
+    [mode, direct.approveAction, orch.approveAction]
   );
 
   const denyAction = useCallback(
-    (approvalId: string) => direct.denyAction(approvalId),
-    [direct.denyAction]
+    (approvalId: string) =>
+      mode === "direct" ? direct.denyAction(approvalId) : orch.denyAction(approvalId),
+    [mode, direct.denyAction, orch.denyAction]
   );
 
   const messages = mode === "direct" ? direct.messages : orch.messages;

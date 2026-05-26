@@ -143,7 +143,7 @@ export function useHermesChat() {
             role: m.role,
             content: m.content,
           })),
-          { role: "user", content: userMessage },
+          { role: "user", content: fullContent },
         ],
         stream: true,
       };

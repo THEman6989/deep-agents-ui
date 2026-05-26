@@ -24,6 +24,21 @@ export interface HermesOrchMessage {
 
 const HERMES_ORCH_URL =
   process.env.NEXT_PUBLIC_HERMES_ORCH_URL || "http://localhost:8650";
+const HERMES_API_URL =
+  process.env.NEXT_PUBLIC_HERMES_API_URL || "http://localhost:8642/v1";
+const HERMES_API_KEY =
+  process.env.NEXT_PUBLIC_HERMES_API_KEY || "***";
+
+function formatAttachmentMessage(
+  userMessage: string,
+  attachments: { name: string; url?: string }[]
+): string {
+  if (attachments.length === 0) return userMessage;
+  const paths = attachments
+    .map((a) => `[File: ${a.name} — ${a.url}]`)
+    .join("\n");
+  return `${userMessage}\n\nAttached files (use read_file to inspect):\n${paths}`;
+}
 
 function parseSSELine(line: string): HermesOrchDelta | null {
   if (!line.startsWith("data: ")) return null;
@@ -89,13 +104,19 @@ export function useHermesOrchestrated() {
   const abortRef = useRef<AbortController | null>(null);
 
   const sendMessage = useCallback(
-    async (userMessage: string, systemPrompt?: string) => {
+    async (
+      userMessage: string,
+      attachments?: { name: string; url?: string }[],
+      systemPrompt?: string
+    ) => {
       if (!userMessage.trim() || isStreaming) return;
+
+      const fullContent = formatAttachmentMessage(userMessage, attachments || []);
 
       const userMsg: HermesOrchMessage = {
         id: crypto.randomUUID(),
         role: "user",
-        content: userMessage,
+        content: fullContent,
       };
 
       const assistantMsg: HermesOrchMessage = {
@@ -118,7 +139,7 @@ export function useHermesOrchestrated() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            message: userMessage,
+            message: fullContent,
             system_prompt: systemPrompt || "",
           }),
           signal: controller.signal,
@@ -237,7 +258,7 @@ export function useHermesOrchestrated() {
         abortRef.current = null;
       }
     },
-    [isStreaming]
+    [messages, isStreaming]
   );
 
   const cancelStream = useCallback(() => {
@@ -250,6 +271,38 @@ export function useHermesOrchestrated() {
     setArtifactKey(null);
   }, []);
 
+  const approveAction = useCallback(async (approvalId: string) => {
+    try {
+      await fetch(`${HERMES_API_URL}/approve`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${HERMES_API_KEY}`,
+        },
+        body: JSON.stringify({ approval_id: approvalId, action: "approve" }),
+      });
+      setPendingApproval(null);
+    } catch (err) {
+      console.error("Orchestrated approval failed:", err);
+    }
+  }, []);
+
+  const denyAction = useCallback(async (approvalId: string) => {
+    try {
+      await fetch(`${HERMES_API_URL}/approve`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${HERMES_API_KEY}`,
+        },
+        body: JSON.stringify({ approval_id: approvalId, action: "deny" }),
+      });
+      setPendingApproval(null);
+    } catch (err) {
+      console.error("Orchestrated deny failed:", err);
+    }
+  }, []);
+
   return {
     messages,
     isStreaming,
@@ -257,6 +310,8 @@ export function useHermesOrchestrated() {
     pendingApproval,
     sendMessage,
     cancelStream,
+    approveAction,
+    denyAction,
     clearMessages,
   };
 }
