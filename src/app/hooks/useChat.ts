@@ -24,6 +24,7 @@ export type StateType = {
     page_content?: string;
   };
   ui?: any;
+  active_agent?: string;
 };
 
 export function useChat({
@@ -55,7 +56,7 @@ export function useChat({
   });
 
   const sendMessage = useCallback(
-    (content: string, contentBlocks?: any[]) => {
+    (content: string, contentBlocks?: any[], options?: { activeAgent?: string }) => {
       let messageContent: Message["content"] = content;
       if (contentBlocks && contentBlocks.length > 0) {
         const parts: any[] = [];
@@ -67,7 +68,7 @@ export function useChat({
       }
       const newMessage: Message = { id: uuidv4(), type: "human", content: messageContent };
       stream.submit(
-        { messages: [newMessage] },
+        { messages: [newMessage], active_agent: options?.activeAgent },
         {
           optimisticValues: (prev) => ({
             messages: [...(prev.messages ?? []), newMessage],

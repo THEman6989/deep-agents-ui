@@ -1,5 +1,5 @@
 import React from "react";
-import { File, X as XIcon } from "lucide-react";
+import { File, X as XIcon, Play } from "lucide-react";
 import { ContentBlock } from "@langchain/core/messages";
 import { cn } from "@/lib/utils";
 import Image from "next/image";
@@ -82,6 +82,99 @@ export const MultimodalPreview: React.FC<MultimodalPreviewProps> = ({
             className="ml-2 self-start rounded-full bg-gray-200 p-1 text-teal-700 hover:bg-gray-300"
             onClick={onRemove}
             aria-label="Remove PDF"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Video block — shows a playable preview (file type, no base64)
+  if (
+    block.type === "file" &&
+    typeof block.mimeType === "string" &&
+    block.mimeType.startsWith("video/")
+  ) {
+    const filename =
+      block.metadata?.filename || block.metadata?.name || "Video";
+    const url =
+      block.metadata?.url as string | undefined;
+    return (
+      <div
+        className={cn(
+          "relative flex items-start gap-2 rounded-md border bg-gray-100 px-3 py-2",
+          className,
+        )}
+      >
+        <div className="flex flex-shrink-0 flex-col items-start justify-start">
+          <div className="relative flex h-10 w-10 items-center justify-center rounded bg-black/10">
+            <Play className="h-5 w-5 text-[#7dd3c7]" />
+          </div>
+        </div>
+        <div className="min-w-0 flex-1">
+          <span
+            className={cn("block text-sm break-all text-gray-800")}
+            style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}
+          >
+            {String(filename)}
+          </span>
+          {url && (
+            <span className="mt-0.5 block truncate text-xs text-gray-500">
+              Uploads to Media Gallery
+            </span>
+          )}
+        </div>
+        {removable && (
+          <button
+            type="button"
+            className="ml-2 self-start rounded-full bg-gray-200 p-1 text-teal-700 hover:bg-gray-300"
+            onClick={onRemove}
+            aria-label="Remove video"
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Audio block
+  if (
+    block.type === "file" &&
+    typeof block.mimeType === "string" &&
+    block.mimeType.startsWith("audio/")
+  ) {
+    const filename =
+      block.metadata?.filename || block.metadata?.name || "Audio";
+    return (
+      <div
+        className={cn(
+          "relative flex items-start gap-2 rounded-md border bg-gray-100 px-3 py-2",
+          className,
+        )}
+      >
+        <div className="flex flex-shrink-0 flex-col items-start justify-start">
+          <div className="flex h-10 w-10 items-center justify-center rounded bg-black/10">
+            <svg className="h-5 w-5 text-[#7dd3c7]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 18V5l12-2v13" />
+              <circle cx="6" cy="18" r="3" />
+              <circle cx="18" cy="16" r="3" />
+            </svg>
+          </div>
+        </div>
+        <span
+          className={cn("min-w-0 flex-1 text-sm break-all text-gray-800")}
+          style={{ wordBreak: "break-all", whiteSpace: "pre-wrap" }}
+        >
+          {String(filename)}
+        </span>
+        {removable && (
+          <button
+            type="button"
+            className="ml-2 self-start rounded-full bg-gray-200 p-1 text-teal-700 hover:bg-gray-300"
+            onClick={onRemove}
+            aria-label="Remove audio"
           >
             <XIcon className="h-4 w-4" />
           </button>

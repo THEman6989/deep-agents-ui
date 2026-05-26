@@ -11,13 +11,64 @@ export const OFFICE_FILE_TYPES = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ] as const;
 
-export const SUPPORTED_FILE_TYPES = [
+/** ODF (OpenDocument) files — gated behind ALPHARAVIS_ENABLE_ODF_UPLOAD */
+export const ODF_FILE_TYPES = [
+  "application/vnd.oasis.opendocument.text",
+  "application/vnd.oasis.opendocument.presentation",
+  "application/vnd.oasis.opendocument.spreadsheet",
+] as const;
+
+const IMAGE_FILE_TYPES = [
   "image/jpeg",
   "image/png",
   "image/gif",
   "image/webp",
+  "image/heic",
+  "image/heif",
+  "image/svg+xml",
+] as const;
+
+const VIDEO_FILE_TYPES = [
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "video/x-matroska",
+  "video/x-msvideo",
+  "video/x-m4v",
+  "video/x-flv",
+  "video/x-ms-wmv",
+  "video/MP2T",
+  "video/3gpp",
+  "video/3gpp2",
+  "video/ogg",
+] as const;
+
+const AUDIO_FILE_TYPES = [
+  "audio/mpeg",
+  "audio/mp4",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/ogg",
+  "audio/webm",
+  "audio/flac",
+] as const;
+
+const DOCUMENT_FILE_TYPES = [
   "application/pdf",
+  "text/plain",
+  "text/markdown",
+  "text/csv",
+  "text/html",
+  "application/json",
+] as const;
+
+export const SUPPORTED_FILE_TYPES = [
+  ...IMAGE_FILE_TYPES,
+  ...VIDEO_FILE_TYPES,
+  ...AUDIO_FILE_TYPES,
   ...OFFICE_FILE_TYPES,
+  ...ODF_FILE_TYPES,
+  ...DOCUMENT_FILE_TYPES,
 ] as const;
 
 const PASTED_IMAGE_EXTENSIONS: Record<string, string> = {
@@ -53,9 +104,9 @@ function normalizePastedFileNames(files: File[]): File[] {
  */
 const ERROR_MESSAGES = {
   INVALID_FILE_TYPE:
-    "You have uploaded invalid file type. Please upload a JPEG, PNG, GIF, WEBP image, PDF, DOCX, PPTX, XLSX file.",
+    "You have uploaded an invalid file type. Please upload an image (JPEG, PNG, GIF, WEBP, HEIC, SVG), video (MP4, WebM, MOV, MKV, AVI), audio (MP3, WAV, OGG, FLAC), PDF, Office document (DOCX, PPTX, XLSX), OpenDocument (ODT, ODP, ODS), or text file (TXT, MD, CSV, JSON, HTML).",
   INVALID_FILE_TYPE_PASTE:
-    "You have pasted an invalid file type. Please paste a JPEG, PNG, GIF, WEBP image, PDF, DOCX, PPTX, XLSX file.",
+    "You have pasted an invalid file type. Please paste an image (JPEG, PNG, GIF, WEBP) file.",
   DUPLICATE_FILES: (fileNames: string[]) =>
     `Duplicate file(s) detected: ${fileNames.join(", ")}. Each file can only be uploaded once per message.`,
 } as const;
@@ -67,7 +118,16 @@ export function isDuplicate(
   file: File,
   existingBlocks: ContentBlock.Multimodal.Data[],
 ): boolean {
-  if (file.type === "application/pdf" || OFFICE_FILE_TYPES.includes(file.type as (typeof OFFICE_FILE_TYPES)[number])) {
+  // All non-image types: match by filename + mimeType
+  if (
+    file.type.startsWith("video/") ||
+    file.type.startsWith("audio/") ||
+    file.type === "application/pdf" ||
+    OFFICE_FILE_TYPES.includes(file.type as (typeof OFFICE_FILE_TYPES)[number]) ||
+    ODF_FILE_TYPES.includes(file.type as (typeof ODF_FILE_TYPES)[number]) ||
+    file.type.startsWith("text/") ||
+    file.type === "application/json"
+  ) {
     return existingBlocks.some(
       (block) =>
         block.type === "file" &&
@@ -76,7 +136,10 @@ export function isDuplicate(
     );
   }
 
-  if (SUPPORTED_FILE_TYPES.includes(file.type as (typeof SUPPORTED_FILE_TYPES)[number])) {
+  // Images: match by name + mimeType
+  if (
+    file.type.startsWith("image/")
+  ) {
     return existingBlocks.some(
       (block) =>
         block.type === "image" &&

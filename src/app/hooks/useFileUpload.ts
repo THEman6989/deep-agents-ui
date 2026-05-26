@@ -2,9 +2,56 @@ import { useState, useRef, useEffect, ChangeEvent, useCallback } from "react";
 import { ContentBlock } from "@langchain/core/messages";
 import { toast } from "sonner";
 import { processFiles } from "@/lib/file-validation";
+import { fileToBase64 } from "@/lib/multimodal-utils";
 
 interface UseFileUploadOptions {
   initialBlocks?: ContentBlock.Multimodal.Data[];
+}
+
+/** Files that must be uploaded to Media Gallery (never base64 in context) */
+const LARGE_MEDIA_PREFIXES = ["video/", "audio/"];
+const DOCUMENT_PREFIXES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument",
+  "application/vnd.oasis.opendocument",
+  "text/",
+  "application/json",
+];
+
+const MEDIA_GALLERY_UPLOAD_URL =
+  process.env.NEXT_PUBLIC_MEDIA_GALLERY_UPLOAD_URL || "http://localhost:8130/api/assets/upload";
+
+function needsGalleryUpload(file: File): boolean {
+  if (LARGE_MEDIA_PREFIXES.some((p) => file.type.startsWith(p))) return true;
+  if (DOCUMENT_PREFIXES.some((p) => file.type.startsWith(p))) return true;
+  return false;
+}
+
+/**
+ * Upload a file to the Media Gallery and return the public URL.
+ */
+async function uploadToMediaGallery(file: File): Promise<{
+  asset_id: string;
+  public_url: string;
+}> {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+
+  const response = await fetch(MEDIA_GALLERY_UPLOAD_URL, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Media Gallery upload failed (${response.status}): ${text}`);
+  }
+
+  const data = await response.json();
+  return {
+    asset_id: data.asset_id as string,
+    public_url: data.public_url as string,
+  };
 }
 
 export function useFileUpload({
@@ -23,7 +70,48 @@ export function useFileUpload({
 
       setIsProcessingFiles(true);
       try {
-        const newBlocks = await processFiles(files, contentBlocks, isPaste);
+        // Split files: images stay as base64, large/media files go to Gallery
+        const galleryFiles: File[] = [];
+        const inlineFiles: File[] = [];
+        for (const file of files) {
+          if (needsGalleryUpload(file)) {
+            galleryFiles.push(file);
+          } else {
+            inlineFiles.push(file);
+          }
+        }
+
+        const newBlocks: ContentBlock.Multimodal.Data[] = [];
+
+        // Process images inline (base64, current behavior)
+        if (inlineFiles.length > 0) {
+          const imageBlocks = await processFiles(inlineFiles, contentBlocks, isPaste);
+          newBlocks.push(...imageBlocks);
+        }
+
+        // Upload large/media files to Media Gallery
+        for (const file of galleryFiles) {
+          try {
+            const { asset_id, public_url } = await uploadToMediaGallery(file);
+            const isVideo = file.type.startsWith("video/");
+            const isAudio = file.type.startsWith("audio/");
+            newBlocks.push({
+              type: "file",
+              mimeType: file.type,
+              data: "", // No inline data — URL in metadata
+              metadata: {
+                filename: file.name,
+                url: public_url,
+                asset_id: asset_id,
+                media_type: isVideo ? "video" : isAudio ? "audio" : "document",
+                size: file.size,
+              },
+            } as ContentBlock.Multimodal.Data);
+          } catch (err) {
+            console.error("Gallery upload failed for", file.name, err);
+            toast.error(`Failed to upload ${file.name} to Media Gallery`);
+          }
+        }
 
         if (newBlocks.length > 0) {
           setContentBlocks((prev) => [...prev, ...newBlocks]);

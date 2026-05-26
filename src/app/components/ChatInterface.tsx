@@ -627,7 +627,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+                  accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.odt,.odp,.ods,.txt,.md,.csv,.json,.log,.html,.htm"
                   onChange={handleFileUpload}
                   className="hidden"
                 />

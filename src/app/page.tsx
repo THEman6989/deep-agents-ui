@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { useClient } from "@/providers/useClient";
-import { Settings, MessagesSquare, SquarePen, FileText } from "lucide-react";
+import { Settings, MessagesSquare, SquarePen, FileText, Terminal } from "lucide-react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -18,6 +18,7 @@ import { ThreadList } from "@/app/components/ThreadList";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
 import { OfficePanel } from "@/app/components/OfficePanel";
+import { HermesPanel } from "@/app/components/HermesPanel";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
@@ -39,7 +40,7 @@ function HomePageInner({
   const [mutateThreads, setMutateThreads] = useState<(() => void) | null>(null);
   const [interruptCount, setInterruptCount] = useState(0);
   const [assistant, setAssistant] = useState<Assistant | null>(null);
-  const [activeView, setActiveView] = useState<"chat" | "office">("chat");
+  const [activeView, setActiveView] = useState<"chat" | "office" | "coding">("chat");
 
   const fetchAssistant = useCallback(async () => {
     const isUUID =
@@ -154,6 +155,15 @@ function HomePageInner({
                 <FileText className="mr-2 h-4 w-4" />
                 Office
               </Button>
+              <Button
+                variant={activeView === "coding" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setActiveView("coding")}
+                className="h-8 px-3"
+              >
+                <Terminal className="mr-2 h-4 w-4" />
+                Coding
+              </Button>
             </div>
             <div className="text-sm text-muted-foreground">
               <span className="font-medium">Assistant:</span>{" "}
@@ -218,10 +228,11 @@ function HomePageInner({
               >
                 {activeView === "chat" ? (
                   <ChatInterface assistant={assistant} />
-                ) : (
+                ) : activeView === "office" ? (
                   <OfficePanel />
-                )}
+                ) : null}
               </ChatProvider>
+              {activeView === "coding" && <HermesPanel />}
             </ResizablePanel>
           </ResizablePanelGroup>
         </div>

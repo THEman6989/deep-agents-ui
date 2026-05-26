@@ -4,6 +4,7 @@ import React, { useMemo, useState, useCallback } from "react";
 import { SubAgentIndicator } from "@/app/components/SubAgentIndicator";
 import { ToolCallBox } from "@/app/components/ToolCallBox";
 import { MarkdownContent } from "@/app/components/MarkdownContent";
+import { VideoPlayer, extractVideoUrls } from "@/app/components/VideoPlayer";
 import type {
   SubAgent,
   ToolCall,
@@ -45,6 +46,10 @@ export const ChatMessage = React.memo<ChatMessageProps>(
     const messageContent = extractStringFromMessageContent(message);
     const hasContent = messageContent && messageContent.trim() !== "";
     const hasToolCalls = toolCalls.length > 0;
+    const videoUrls = useMemo(
+      () => (hasContent ? extractVideoUrls(messageContent) : []),
+      [messageContent]
+    );
     const subAgents = useMemo(() => {
       return toolCalls
         .filter((toolCall: ToolCall) => {
@@ -120,6 +125,13 @@ export const ChatMessage = React.memo<ChatMessageProps>(
                   <MarkdownContent content={messageContent} />
                 ) : null}
               </div>
+            </div>
+          )}
+          {videoUrls.length > 0 && (
+            <div className="mt-2 flex flex-col gap-3">
+              {videoUrls.map((v, i) => (
+                <VideoPlayer key={i} url={v.url} filename={v.filename} />
+              ))}
             </div>
           )}
           {hasToolCalls && (
