@@ -60,14 +60,17 @@ export function ComfyUIPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [statusData, queueData, modelsData] = await Promise.all([
-        getJson("/status", controller.signal),
+      const [statusRaw, queueData, modelsRaw] = await Promise.all([
+        getJson("/system_stats", controller.signal),
         getJson("/queue", controller.signal),
         getJson(`/models/${encodeURIComponent(folder)}`, controller.signal),
       ]);
-      setStatus(statusData);
-      setQueue(queueData);
-      setModels(modelsData);
+      // ComfyUI returns system_stats directly; wrap for UI compatibility
+      const statusWrapped = { ok: true, base_url: COMFYUI_API_BASE, status: statusRaw };
+      const modelsWrapped = { ok: true, base_url: COMFYUI_API_BASE, total: modelNames(modelsRaw).length, models: modelsRaw };
+      setStatus(statusWrapped);
+      setQueue({ ok: true, base_url: COMFYUI_API_BASE, queue: queueData });
+      setModels(modelsWrapped);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -95,7 +98,7 @@ export function ComfyUIPanel() {
               <h2 className="text-lg font-semibold">ComfyUI Control</h2>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              LAN-Steuerung fuer den konfigurierten ComfyPC ueber Media Gallery Proxy.
+              LAN-Steuerung fuer den ComfyPC — direkter Zugriff auf ComfyUI API.
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={refresh} disabled={loading}>
