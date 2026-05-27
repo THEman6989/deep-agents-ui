@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Assistant } from "@langchain/langgraph-sdk";
 import { ClientProvider } from "@/providers/ClientProvider";
 import { useClient } from "@/providers/useClient";
-import { Settings, MessagesSquare, SquarePen, FileText, Terminal } from "lucide-react";
+import { Settings, MessagesSquare, SquarePen, FileText, Terminal, Sparkles } from "lucide-react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -19,6 +19,7 @@ import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
 import { OfficePanel } from "@/app/components/OfficePanel";
 import { HermesPanel } from "@/app/components/HermesPanel";
+import { ComfyUIPanel } from "@/app/components/ComfyUIPanel";
 
 interface HomePageInnerProps {
   config: StandaloneConfig;
@@ -40,7 +41,7 @@ function HomePageInner({
   const [mutateThreads, setMutateThreads] = useState<(() => void) | null>(null);
   const [interruptCount, setInterruptCount] = useState(0);
   const [assistant, setAssistant] = useState<Assistant | null>(null);
-  const [activeView, setActiveView] = useState<"chat" | "office" | "coding">("chat");
+  const [activeView, setActiveView] = useState<"chat" | "office" | "coding" | "comfyui">("chat");
 
   const fetchAssistant = useCallback(async () => {
     const isUUID =
@@ -164,6 +165,15 @@ function HomePageInner({
                 <Terminal className="mr-2 h-4 w-4" />
                 Coding
               </Button>
+              <Button
+                variant={activeView === "comfyui" ? "secondary" : "ghost"}
+                size="sm"
+                onClick={() => setActiveView("comfyui")}
+                className="h-8 px-3"
+              >
+                <Sparkles className="mr-2 h-4 w-4" />
+                ComfyUI
+              </Button>
             </div>
             <div className="text-sm text-muted-foreground">
               <span className="font-medium">Assistant:</span>{" "}
@@ -230,6 +240,8 @@ function HomePageInner({
                   <ChatInterface assistant={assistant} />
                 ) : activeView === "office" ? (
                   <OfficePanel />
+                ) : activeView === "comfyui" ? (
+                  <ComfyUIPanel />
                 ) : null}
               </ChatProvider>
               {activeView === "coding" && <HermesPanel />}
