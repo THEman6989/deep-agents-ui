@@ -4,16 +4,36 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Activity, Boxes, CheckCircle2, CircleAlert, Loader2, RefreshCw, Save, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useChatContext } from "@/providers/useChatContext";
 
 const DEFAULT_DIRECT_API_BASE =
   process.env.NEXT_PUBLIC_COMFYUI_PANEL_API_BASE || "http://localhost:8188";
 const DEFAULT_PROXY_API_BASE =
-  process.env.NEXT_PUBLIC_COMFYUI_PROXY_API_BASE || "http://localhost:8130/comfyui";
+  process.env.NEXT_PUBLIC_COMFYUI_PROXY_API_BASE ||
+  (typeof window !== "undefined"
+    ? `${window.location.protocol}//${window.location.hostname}:8130/comfyui`
+    : "http://localhost:8130/comfyui");
 const WORKFLOW_SUBMIT_ENABLED = ["1", "true", "yes", "on"].includes(
   (process.env.NEXT_PUBLIC_COMFYUI_WORKFLOW_SUBMIT_ENABLED || "false").trim().toLowerCase(),
 );
+const COMFYUI_AGENT_ENABLED = ["1", "true", "yes", "on"].includes(
+  (process.env.NEXT_PUBLIC_COMFYUI_AGENT_ENABLED || "false").trim().toLowerCase(),
+);
+const COMFYUI_AGENT_NAME = process.env.NEXT_PUBLIC_COMFYUI_AGENT_NAME || "comfyui_agent";
 
-const MODEL_FOLDERS = ["checkpoints", "vae", "loras", "controlnet", "clip", "unet", "embeddings"];
+const MODEL_FOLDERS = [
+  "checkpoints",
+  "vae",
+  "loras",
+  "controlnet",
+  "clip",
+  "clip_vision",
+  "unet",
+  "embeddings",
+  "diffusion_models",
+  "style_models",
+  "upscale_models",
+];
 const STORAGE_PREFIX = "alpharavis.comfyui.";
 const FETCH_TIMEOUT_MS = 5000;
 
@@ -61,10 +81,33 @@ const MODEL_INPUT_FOLDERS: Record<string, string> = {
   vae: "vae",
   control_net_name: "controlnet",
   controlnet_name: "controlnet",
+  control_net: "controlnet",
   clip_name: "clip",
+  clip_name1: "clip",
+  clip_name2: "clip",
+  clip_name3: "clip",
+  clip_vision_name: "clip_vision",
   clip: "clip",
   unet_name: "unet",
   unet: "unet",
+  diffusion_model: "diffusion_models",
+  diffusion_model_name: "diffusion_models",
+  style_model_name: "style_models",
+  upscale_model_name: "upscale_models",
+};
+
+const NODE_CLASS_MODEL_INPUT_FOLDERS: Record<string, Record<string, string>> = {
+  CLIPVisionLoader: {
+    clip_name: "clip_vision",
+    clip_vision_name: "clip_vision",
+  },
+  UpscaleModelLoader: {
+    model_name: "upscale_models",
+  },
+  StyleModelLoader: {
+    model_name: "style_models",
+    style_model_name: "style_models",
+  },
 };
 
 function normalizeBaseUrl(value: string) {
@@ -134,6 +177,20 @@ function withTimeout(signal?: AbortSignal, timeoutMs = FETCH_TIMEOUT_MS) {
   };
 }
 
+function applicationFailure(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  const obj = data as Record<string, any>;
+  const result = obj.result && typeof obj.result === "object" ? (obj.result as Record<string, any>) : {};
+  return obj.ok === false || obj.blocked === true || result.blocked === true;
+}
+
+function applicationErrorMessage(data: unknown, fallback: string) {
+  if (!data || typeof data !== "object") return fallback;
+  const obj = data as Record<string, any>;
+  const result = obj.result && typeof obj.result === "object" ? (obj.result as Record<string, any>) : {};
+  return String(obj.detail || obj.error || obj.message || result.detail || result.error || result.message || fallback);
+}
+
 async function getJson(baseUrl: string, path: string, signal?: AbortSignal) {
   const timeout = withTimeout(signal);
   try {
@@ -142,13 +199,16 @@ async function getJson(baseUrl: string, path: string, signal?: AbortSignal) {
     if (!response.ok) {
       throw new Error(data?.detail || data?.error || response.statusText);
     }
+    if (applicationFailure(data)) {
+      throw new Error(applicationErrorMessage(data, "Proxy returned ok=false."));
+    }
     return data;
   } finally {
     timeout.cleanup();
   }
 }
 
-async function postJson(baseUrl: string, path: string, payload: unknown) {
+async function postJson(baseUrl: string, path: string, payload: unknown, options?: { allowApplicationFailure?: boolean }) {
   const timeout = withTimeout(undefined, FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(`${baseUrl}${path}`, {
@@ -160,6 +220,9 @@ async function postJson(baseUrl: string, path: string, payload: unknown) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       throw new Error(data?.detail || data?.error || response.statusText);
+    }
+    if (!options?.allowApplicationFailure && applicationFailure(data)) {
+      throw new Error(applicationErrorMessage(data, "Proxy returned ok=false."));
     }
     return data;
   } finally {
@@ -239,9 +302,10 @@ function extractModelRequirements(workflow: Record<string, any>): Record<string,
     required.get(folder)?.add(trimmed);
   };
   for (const node of Object.values(workflow)) {
+    const classType = typeof node?.class_type === "string" ? node.class_type : "";
     const inputs = node?.inputs && typeof node.inputs === "object" ? node.inputs : {};
     for (const [key, value] of Object.entries(inputs)) {
-      const folder = MODEL_INPUT_FOLDERS[key];
+      const folder = NODE_CLASS_MODEL_INPUT_FOLDERS[classType]?.[key] || MODEL_INPUT_FOLDERS[key];
       if (folder && typeof value === "string") add(folder, value);
       if (typeof value === "string") {
         for (const match of value.matchAll(/embedding:([A-Za-z0-9_.\-/]+)/g)) add("embeddings", match[1]);
@@ -350,6 +414,7 @@ function extractHistoryOutputs(historyPayload: any, promptId: string, baseUrl: s
 }
 
 export function ComfyUIPanel() {
+  const { sendMessage } = useChatContext();
   const [status, setStatus] = useState<any | null>(null);
   const [queue, setQueue] = useState<any | null>(null);
   const [models, setModels] = useState<any | null>(null);
@@ -596,45 +661,51 @@ export function ComfyUIPanel() {
     setError(null);
     try {
       const workflow = parseWorkflowJson();
-      const candidates = activeConnection ? [activeConnection] : candidatesFor(connectionMode, directBase, proxyBase);
-      const errors: string[] = [];
-      for (const candidate of candidates) {
-        try {
-          const preflight = candidate.kind === "direct"
-            ? await directWorkflowPreflight(candidate.baseUrl, workflow)
-            : (await postJson(candidate.baseUrl, "/preflight", { workflow, client_id: workflowClientId, check_server: true })).preflight;
-          if (!preflight?.ready) {
-            const result = { mode: "live", connection: candidate.kind, base_url: candidate.baseUrl, blocked: true, preflight };
-            setWorkflowResult(result);
-            appendLog(`workflow live submit blocked by preflight via ${candidate.kind}`);
-            return;
-          }
-          const proxy = normalizeBaseUrl(proxyBase || DEFAULT_PROXY_API_BASE);
-          if (!proxy) {
-            throw new Error("Proxy API fehlt; Live Submit laeuft absichtlich nur ueber media-gallery /comfyui/prompt.");
-          }
-          const submitResult = await postJson(proxy, "/prompt", {
-            workflow,
-            client_id: workflowClientId || "alpharavis-ui",
-            check_server: true,
-          });
-          const prompt = submitResult?.prompt_id || submitResult?.result?.prompt_id || "";
-          if (prompt) setPromptId(String(prompt));
-          const result = { mode: "live", connection: candidate.kind, base_url: candidate.baseUrl, submit_via: proxy, preflight, submit: submitResult };
-          setWorkflowResult(result);
-          appendLog(`workflow submitted via proxy${prompt ? ` prompt_id=${prompt}` : ""}`);
-          return;
-        } catch (err) {
-          errors.push(describeFetchError(err, candidate));
-        }
+      const proxy = normalizeBaseUrl(proxyBase || DEFAULT_PROXY_API_BASE);
+      if (!proxy) {
+        throw new Error("Proxy API fehlt; Live Submit laeuft absichtlich nur ueber media-gallery /comfyui/prompt.");
       }
-      throw new Error(errors.join("\n") || "Keine aktive ComfyUI Connection fuer Live Submit.");
+      const preflightResponse = await postJson(proxy, "/preflight", { workflow, client_id: workflowClientId, check_server: true });
+      const preflight = preflightResponse?.preflight;
+      if (!preflight?.ready) {
+        const result = { mode: "live", connection: "proxy", base_url: proxy, blocked: true, preflight };
+        setWorkflowResult(result);
+        appendLog("workflow live submit blocked by proxy preflight");
+        return;
+      }
+      const submitResult = await postJson(proxy, "/prompt", {
+        workflow,
+        client_id: workflowClientId || "alpharavis-ui",
+        check_server: true,
+      }, { allowApplicationFailure: true });
+      const backendBlocked = submitResult?.ok === false || submitResult?.blocked === true || submitResult?.result?.blocked === true;
+      if (backendBlocked) {
+        const result = { mode: "live", connection: "proxy", base_url: proxy, blocked: true, preflight, submit: submitResult };
+        setWorkflowResult(result);
+        appendLog(`workflow live submit blocked by backend: ${applicationErrorMessage(submitResult, "blocked")}`);
+        return;
+      }
+      const prompt = submitResult?.prompt_id || submitResult?.result?.prompt_id || "";
+      if (prompt) setPromptId(String(prompt));
+      const result = { mode: "live", connection: "proxy", base_url: proxy, submit_via: proxy, preflight, submit: submitResult };
+      setWorkflowResult(result);
+      appendLog(`workflow submitted via proxy${prompt ? ` prompt_id=${prompt}` : ""}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setActionLoading(false);
     }
-  }, [activeConnection, appendLog, connectionMode, directBase, parseWorkflowJson, proxyBase, workflowClientId]);
+  }, [appendLog, parseWorkflowJson, proxyBase, workflowClientId]);
+
+  const sendAgentPrompt = useCallback((prompt: string) => {
+    if (!COMFYUI_AGENT_ENABLED) {
+      navigator.clipboard?.writeText(prompt);
+      appendLog("ComfyUI agent is disabled; prompt copied to clipboard instead.");
+      return;
+    }
+    sendMessage(prompt, undefined, { activeAgent: COMFYUI_AGENT_NAME });
+    appendLog(`sent prompt to ${COMFYUI_AGENT_NAME}`);
+  }, [appendLog, sendMessage]);
 
   const ok = Boolean(status?.ok);
   const baseUrl = status?.base_url || queue?.base_url || models?.base_url || "configured ComfyUI";
@@ -905,7 +976,7 @@ export function ComfyUIPanel() {
               ].map((prompt) => (
                 <button
                   key={prompt}
-                  onClick={() => navigator.clipboard?.writeText(prompt)}
+                  onClick={() => sendAgentPrompt(prompt)}
                   className="w-full rounded-md border border-border bg-background/60 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
                 >
                   {prompt}
@@ -913,6 +984,7 @@ export function ComfyUIPanel() {
               ))}
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
+              {COMFYUI_AGENT_ENABLED ? `Buttons senden direkt an ${COMFYUI_AGENT_NAME}. ` : "ComfyUI agent ist im UI deaktiviert; Buttons kopieren Prompts. "}
               Workflow Live Submit bleibt default-off und braucht sowohl NEXT_PUBLIC_COMFYUI_WORKFLOW_SUBMIT_ENABLED=true im UI-Build als auch ALPHARAVIS_ENABLE_COMFYUI_WORKFLOW_SUBMIT=true im Backend/Agent. Output-Registrierung speichert standardmäßig nur URLs, damit lokale Docker→Host-Port-Probleme nicht blockieren.
             </p>
           </div>
