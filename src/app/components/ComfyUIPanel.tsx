@@ -9,12 +9,17 @@ const DEFAULT_DIRECT_API_BASE =
   process.env.NEXT_PUBLIC_COMFYUI_PANEL_API_BASE || "http://localhost:8188";
 const DEFAULT_PROXY_API_BASE =
   process.env.NEXT_PUBLIC_COMFYUI_PROXY_API_BASE || "http://localhost:8130/comfyui";
+const WORKFLOW_SUBMIT_ENABLED = ["1", "true", "yes", "on"].includes(
+  (process.env.NEXT_PUBLIC_COMFYUI_WORKFLOW_SUBMIT_ENABLED || "false").trim().toLowerCase(),
+);
 
 const MODEL_FOLDERS = ["checkpoints", "vae", "loras", "controlnet", "clip", "unet", "embeddings"];
 const STORAGE_PREFIX = "alpharavis.comfyui.";
+const FETCH_TIMEOUT_MS = 5000;
 
 type ConnectionMode = "auto" | "direct" | "proxy";
 type ConnectionKind = "direct" | "proxy";
+type WorkflowMode = "draft" | "live";
 
 type Candidate = {
   kind: ConnectionKind;
@@ -29,6 +34,37 @@ type ComfyOutput = {
   subfolder: string;
   type: string;
   url?: string;
+};
+
+type WorkflowPreflightReport = {
+  ok: boolean;
+  ready: boolean;
+  format?: string;
+  error?: string;
+  warnings?: string[];
+  node_count?: number;
+  node_classes?: string[];
+  model_requirements?: Record<string, string[]>;
+  missing_node_classes?: string[];
+  missing_models?: Record<string, string[]>;
+  available_model_counts?: Record<string, number>;
+  server_checked?: boolean;
+};
+
+const MODEL_INPUT_FOLDERS: Record<string, string> = {
+  ckpt_name: "checkpoints",
+  checkpoint: "checkpoints",
+  checkpoint_name: "checkpoints",
+  lora_name: "loras",
+  lora: "loras",
+  vae_name: "vae",
+  vae: "vae",
+  control_net_name: "controlnet",
+  controlnet_name: "controlnet",
+  clip_name: "clip",
+  clip: "clip",
+  unet_name: "unet",
+  unet: "unet",
 };
 
 function normalizeBaseUrl(value: string) {
@@ -75,32 +111,60 @@ function queueCount(queue: any): number {
 
 function describeFetchError(err: unknown, candidate: Candidate) {
   const message = err instanceof Error ? err.message : String(err);
+  if (message.includes("AbortError") || message.includes("aborted")) {
+    return `${candidate.kind} ${candidate.baseUrl}: Timeout nach ${FETCH_TIMEOUT_MS} ms.`;
+  }
   if (message === "Failed to fetch" || message.includes("NetworkError")) {
     return `${candidate.kind} ${candidate.baseUrl}: Browser konnte ComfyUI nicht erreichen oder CORS hat geblockt.`;
   }
   return `${candidate.kind} ${candidate.baseUrl}: ${message}`;
 }
 
+function withTimeout(signal?: AbortSignal, timeoutMs = FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    },
+  };
+}
+
 async function getJson(baseUrl: string, path: string, signal?: AbortSignal) {
-  const response = await fetch(`${baseUrl}${path}`, { signal });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data?.detail || data?.error || response.statusText);
+  const timeout = withTimeout(signal);
+  try {
+    const response = await fetch(`${baseUrl}${path}`, { signal: timeout.signal });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.detail || data?.error || response.statusText);
+    }
+    return data;
+  } finally {
+    timeout.cleanup();
   }
-  return data;
 }
 
 async function postJson(baseUrl: string, path: string, payload: unknown) {
-  const response = await fetch(`${baseUrl}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data?.detail || data?.error || response.statusText);
+  const timeout = withTimeout(undefined, FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${baseUrl}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: timeout.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data?.detail || data?.error || response.statusText);
+    }
+    return data;
+  } finally {
+    timeout.cleanup();
   }
-  return data;
 }
 
 function candidatesFor(mode: ConnectionMode, directBase: string, proxyBase: string): Candidate[] {
@@ -135,6 +199,124 @@ function viewUrl(baseUrl: string, output: ComfyOutput) {
 
 function normalizeOutputs(outputs: ComfyOutput[], baseUrl: string): ComfyOutput[] {
   return outputs.map((output) => ({ ...output, url: viewUrl(baseUrl, output) }));
+}
+
+function isWorkflowApiFormat(workflow: unknown): workflow is Record<string, any> {
+  return Boolean(
+    workflow &&
+      typeof workflow === "object" &&
+      !Array.isArray(workflow) &&
+      Object.values(workflow as Record<string, any>).length > 0 &&
+      Object.values(workflow as Record<string, any>).every((node) => node && typeof node === "object" && "class_type" in node),
+  );
+}
+
+function looksLikeEditorWorkflow(workflow: unknown) {
+  return Boolean(
+    workflow &&
+      typeof workflow === "object" &&
+      !Array.isArray(workflow) &&
+      Array.isArray((workflow as Record<string, unknown>).nodes) &&
+      Array.isArray((workflow as Record<string, unknown>).links),
+  );
+}
+
+function workflowNodeClasses(workflow: Record<string, any>): string[] {
+  const classes: string[] = [];
+  for (const node of Object.values(workflow)) {
+    const classType = typeof node?.class_type === "string" ? node.class_type : "";
+    if (classType && !classes.includes(classType)) classes.push(classType);
+  }
+  return classes;
+}
+
+function extractModelRequirements(workflow: Record<string, any>): Record<string, string[]> {
+  const required = new Map<string, Set<string>>();
+  const add = (folder: string, value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || ["none", "default"].includes(trimmed.toLowerCase())) return;
+    if (!required.has(folder)) required.set(folder, new Set());
+    required.get(folder)?.add(trimmed);
+  };
+  for (const node of Object.values(workflow)) {
+    const inputs = node?.inputs && typeof node.inputs === "object" ? node.inputs : {};
+    for (const [key, value] of Object.entries(inputs)) {
+      const folder = MODEL_INPUT_FOLDERS[key];
+      if (folder && typeof value === "string") add(folder, value);
+      if (typeof value === "string") {
+        for (const match of value.matchAll(/embedding:([A-Za-z0-9_.\-/]+)/g)) add("embeddings", match[1]);
+      }
+    }
+  }
+  return Object.fromEntries([...required.entries()].map(([folder, values]) => [folder, [...values].sort()]));
+}
+
+function localWorkflowPreflight(workflow: unknown): WorkflowPreflightReport {
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) {
+    return { ok: false, ready: false, error: "Workflow muss ein nicht-leeres JSON-Objekt sein." };
+  }
+  if (looksLikeEditorWorkflow(workflow)) {
+    return { ok: false, ready: false, format: "editor", error: "Editor-Format erkannt: bitte in ComfyUI als API-Format exportieren." };
+  }
+  if (!isWorkflowApiFormat(workflow)) {
+    return { ok: false, ready: false, format: "unknown", error: "Workflow muss API-Format sein: Node-ID Map, jede Node mit class_type." };
+  }
+  return {
+    ok: true,
+    ready: true,
+    format: "api",
+    node_count: Object.keys(workflow).length,
+    node_classes: workflowNodeClasses(workflow),
+    model_requirements: extractModelRequirements(workflow),
+    missing_node_classes: [],
+    missing_models: {},
+    server_checked: false,
+  };
+}
+
+function modelPresent(required: string, available: string[]) {
+  const req = required.trim().toLowerCase();
+  const reqName = req.split("/").pop() || req;
+  const reqStem = reqName.replace(/\.[^.]+$/, "");
+  return available.some((item) => {
+    const cand = item.trim().toLowerCase();
+    const candName = cand.split("/").pop() || cand;
+    const candStem = candName.replace(/\.[^.]+$/, "");
+    return [cand, candName].includes(req) || [cand, candName].includes(reqName) || reqStem === candStem;
+  });
+}
+
+async function directWorkflowPreflight(baseUrl: string, workflow: unknown): Promise<WorkflowPreflightReport> {
+  const report = localWorkflowPreflight(workflow);
+  if (!report.ok || !isWorkflowApiFormat(workflow)) return report;
+  try {
+    const objectInfo = await getJson(baseUrl, "/object_info");
+    const knownClasses = new Set(Object.keys(objectInfo || {}));
+    report.server_checked = true;
+    report.missing_node_classes = (report.node_classes || []).filter((className) => !knownClasses.has(className));
+  } catch (err) {
+    report.ready = false;
+    report.warnings = [`object_info nicht erreichbar: ${err instanceof Error ? err.message : String(err)}`];
+  }
+
+  const missingModels: Record<string, string[]> = {};
+  const availableModelCounts: Record<string, number> = {};
+  for (const [folder, requiredNames] of Object.entries(report.model_requirements || {})) {
+    try {
+      const payload = await getJson(baseUrl, `/models/${encodeURIComponent(folder)}`);
+      const available = modelNames(payload);
+      availableModelCounts[folder] = available.length;
+      const missing = requiredNames.filter((name) => !modelPresent(name, available));
+      if (missing.length) missingModels[folder] = missing;
+    } catch (err) {
+      missingModels[folder] = requiredNames;
+      report.warnings = [...(report.warnings || []), `${folder} model check fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`];
+    }
+  }
+  report.available_model_counts = availableModelCounts;
+  report.missing_models = missingModels;
+  report.ready = Boolean(report.ok && !(report.missing_node_classes || []).length && !Object.keys(missingModels).length && !(report.warnings || []).length);
+  return report;
 }
 
 function extractHistoryOutputs(historyPayload: any, promptId: string, baseUrl: string): ComfyOutput[] {
@@ -184,6 +366,10 @@ export function ComfyUIPanel() {
   const [watchLog, setWatchLog] = useState<string[]>([]);
   const [registerResult, setRegisterResult] = useState<any | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>("draft");
+  const [workflowJson, setWorkflowJson] = useState("");
+  const [workflowClientId, setWorkflowClientId] = useState("alpharavis-ui");
+  const [workflowResult, setWorkflowResult] = useState<any | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -359,6 +545,97 @@ export function ComfyUIPanel() {
     }
   }, [activeConnection, appendLog, directBase, fetchHistory, historyOutputs, promptId, proxyBase]);
 
+  const parseWorkflowJson = useCallback(() => {
+    if (!workflowJson.trim()) {
+      throw new Error("Workflow JSON fehlt.");
+    }
+    const parsed = JSON.parse(workflowJson);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Workflow JSON muss ein Objekt sein.");
+    }
+    return parsed as Record<string, any>;
+  }, [workflowJson]);
+
+  const runWorkflowPreflight = useCallback(async () => {
+    setActionLoading(true);
+    setWorkflowResult(null);
+    setError(null);
+    try {
+      const workflow = parseWorkflowJson();
+      const candidates = activeConnection ? [activeConnection] : candidatesFor(connectionMode, directBase, proxyBase);
+      const errors: string[] = [];
+      for (const candidate of candidates) {
+        try {
+          const preflight = candidate.kind === "direct"
+            ? await directWorkflowPreflight(candidate.baseUrl, workflow)
+            : (await postJson(candidate.baseUrl, "/preflight", { workflow, client_id: workflowClientId, check_server: true })).preflight;
+          const result = { mode: "draft", connection: candidate.kind, base_url: candidate.baseUrl, preflight };
+          setWorkflowResult(result);
+          appendLog(`workflow draft preflight via ${candidate.kind}: ${preflight?.ready ? "ready" : "blocked"}`);
+          return preflight as WorkflowPreflightReport;
+        } catch (err) {
+          errors.push(describeFetchError(err, candidate));
+        }
+      }
+      throw new Error(errors.join("\n") || "Keine aktive ComfyUI Connection fuer Preflight.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      return null;
+    } finally {
+      setActionLoading(false);
+    }
+  }, [activeConnection, appendLog, connectionMode, directBase, parseWorkflowJson, proxyBase, workflowClientId]);
+
+  const submitWorkflow = useCallback(async () => {
+    if (!WORKFLOW_SUBMIT_ENABLED) {
+      setError("Live Submit ist im UI deaktiviert. Setze NEXT_PUBLIC_COMFYUI_WORKFLOW_SUBMIT_ENABLED=true und backendseitig ALPHARAVIS_ENABLE_COMFYUI_WORKFLOW_SUBMIT=true.");
+      return;
+    }
+    setActionLoading(true);
+    setWorkflowResult(null);
+    setError(null);
+    try {
+      const workflow = parseWorkflowJson();
+      const candidates = activeConnection ? [activeConnection] : candidatesFor(connectionMode, directBase, proxyBase);
+      const errors: string[] = [];
+      for (const candidate of candidates) {
+        try {
+          const preflight = candidate.kind === "direct"
+            ? await directWorkflowPreflight(candidate.baseUrl, workflow)
+            : (await postJson(candidate.baseUrl, "/preflight", { workflow, client_id: workflowClientId, check_server: true })).preflight;
+          if (!preflight?.ready) {
+            const result = { mode: "live", connection: candidate.kind, base_url: candidate.baseUrl, blocked: true, preflight };
+            setWorkflowResult(result);
+            appendLog(`workflow live submit blocked by preflight via ${candidate.kind}`);
+            return;
+          }
+          const proxy = normalizeBaseUrl(proxyBase || DEFAULT_PROXY_API_BASE);
+          if (!proxy) {
+            throw new Error("Proxy API fehlt; Live Submit laeuft absichtlich nur ueber media-gallery /comfyui/prompt.");
+          }
+          const submitResult = await postJson(proxy, "/prompt", {
+            workflow,
+            client_id: workflowClientId || "alpharavis-ui",
+            check_server: true,
+          });
+          const prompt = submitResult?.prompt_id || submitResult?.result?.prompt_id || "";
+          if (prompt) setPromptId(String(prompt));
+          const result = { mode: "live", connection: candidate.kind, base_url: candidate.baseUrl, submit_via: proxy, preflight, submit: submitResult };
+          setWorkflowResult(result);
+          appendLog(`workflow submitted via proxy${prompt ? ` prompt_id=${prompt}` : ""}`);
+          return;
+        } catch (err) {
+          errors.push(describeFetchError(err, candidate));
+        }
+      }
+      throw new Error(errors.join("\n") || "Keine aktive ComfyUI Connection fuer Live Submit.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setActionLoading(false);
+    }
+  }, [activeConnection, appendLog, connectionMode, directBase, parseWorkflowJson, proxyBase, workflowClientId]);
+
   const ok = Boolean(status?.ok);
   const baseUrl = status?.base_url || queue?.base_url || models?.base_url || "configured ComfyUI";
   const names = useMemo(() => modelNames(models?.models), [models]);
@@ -480,6 +757,74 @@ export function ComfyUIPanel() {
 
         <div className="mt-6 rounded-lg border border-border bg-card p-4">
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold">Workflow Draft / Live Submit</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Draft macht Preflight ohne Queue-Submit. Live reicht nach erfolgreichem Preflight an media-gallery /comfyui/prompt weiter und ist default-off.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              <span className={cn("rounded px-2 py-1", WORKFLOW_SUBMIT_ENABLED ? "bg-[#47d7ac]/10 text-[#47d7ac]" : "bg-warning/10 text-warning")}>
+                Live submit: {WORKFLOW_SUBMIT_ENABLED ? "enabled" : "disabled"}
+              </span>
+            </div>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-[160px_1fr]">
+            <label className="text-xs font-medium text-muted-foreground">
+              Submit mode
+              <select
+                value={workflowMode}
+                onChange={(event) => setWorkflowMode(event.target.value as WorkflowMode)}
+                className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+              >
+                <option value="draft">draft / preflight only</option>
+                <option value="live">live / submit after preflight</option>
+              </select>
+            </label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Client ID
+              <input
+                value={workflowClientId}
+                onChange={(event) => setWorkflowClientId(event.target.value)}
+                className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1 font-mono text-sm text-foreground"
+                placeholder="alpharavis-ui"
+              />
+            </label>
+          </div>
+          <textarea
+            value={workflowJson}
+            onChange={(event) => setWorkflowJson(event.target.value)}
+            className="mt-3 h-52 w-full rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground"
+            placeholder={'Paste ComfyUI API workflow JSON here, e.g. {"1":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"model.safetensors"}}}'}
+            spellCheck={false}
+          />
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={runWorkflowPreflight} disabled={actionLoading || !workflowJson.trim()}>
+              Draft Preflight
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={workflowMode === "live" ? submitWorkflow : runWorkflowPreflight}
+              disabled={actionLoading || !workflowJson.trim() || (workflowMode === "live" && !WORKFLOW_SUBMIT_ENABLED)}
+            >
+              {workflowMode === "live" ? "Live Submit" : "Run Draft"}
+            </Button>
+          </div>
+          {workflowMode === "live" && !WORKFLOW_SUBMIT_ENABLED && (
+            <p className="mt-2 text-xs text-warning">
+              Live Submit ist gesperrt. Frontend: NEXT_PUBLIC_COMFYUI_WORKFLOW_SUBMIT_ENABLED=true; Backend/Agent: ALPHARAVIS_ENABLE_COMFYUI_WORKFLOW_SUBMIT=true.
+            </p>
+          )}
+          {workflowResult && (
+            <pre className="mt-3 max-h-80 overflow-auto rounded bg-black/20 p-3 text-xs text-muted-foreground">
+              {JSON.stringify(workflowResult, null, 2)}
+            </pre>
+          )}
+        </div>
+
+        <div className="mt-6 rounded-lg border border-border bg-card p-4">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
             <label className="min-w-[280px] flex-1 text-xs font-medium text-muted-foreground">
               Prompt ID für History/Live-Progress
               <input
@@ -568,7 +913,7 @@ export function ComfyUIPanel() {
               ))}
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              Direct workflow submit bleibt backend-seitig aus, bis ALPHARAVIS_ENABLE_COMFYUI_WORKFLOW_SUBMIT=true gesetzt ist. Output-Registrierung speichert standardmäßig nur URLs, damit lokale Docker→Host-Port-Probleme nicht blockieren.
+              Workflow Live Submit bleibt default-off und braucht sowohl NEXT_PUBLIC_COMFYUI_WORKFLOW_SUBMIT_ENABLED=true im UI-Build als auch ALPHARAVIS_ENABLE_COMFYUI_WORKFLOW_SUBMIT=true im Backend/Agent. Output-Registrierung speichert standardmäßig nur URLs, damit lokale Docker→Host-Port-Probleme nicht blockieren.
             </p>
           </div>
         </div>
